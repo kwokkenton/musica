@@ -1,0 +1,25 @@
+name: musica-env
+channels:
+  - defaults
+  - conda-forge
+  - huggingface
+dependencies:
+  - python=3.10
+  - pip
+  - numpy
+  - pandas
+  - matplotlib
+  - scipy
+  - conda-forge::datasets
+  - tqdm
+  - pre-commit
+  - ipykernel
+  - pip:
+      - wandb
+      - huggingface_hub[hf_xet]
+      - transformers
+      - torch
+      - torchvision
+      - fastapi
+      - uvicorn
+      - python-multipart
