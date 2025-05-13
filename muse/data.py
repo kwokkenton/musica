@@ -6,12 +6,12 @@ import librosa
 import mido
 import numpy as np
 import pandas as pd
-import soundfile as sf
 import torch
 from mido import Message, MetaMessage, MidiFile, MidiTrack
+from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, Dataset
 
-from muse import vis
+from muse.vis import messages_to_wav, spectrogram_to_wav
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -79,6 +79,10 @@ class Tokeniser:
         self.time_max  = 6000
         self.velocity_max = 128
         self.note_max = 128
+
+        self.bos_id = 6000+128+128
+        self.eos_id = self.bos_id + 1
+        self.pad_id = self.bos_id
     
     @staticmethod
     def process_midi(midi: MidiFile, tempo = 500000):
@@ -96,7 +100,6 @@ class Tokeniser:
         """
 
         ticks = []
-        # msgs = []
         notes = []
         velocities = []
 
@@ -138,7 +141,10 @@ class Tokeniser:
     
     @staticmethod
     def time_ms_to_ticks(time, tempo, ticks_per_beat):
-        time = torch.tensor(time, dtype=torch.float32)
+        if type(time) is torch.Tensor:
+            time = time.to(torch.float32)
+        else:
+            time = float(time)
         return time * ticks_per_beat * 1000/ tempo
     
     @staticmethod
@@ -186,18 +192,20 @@ class Tokeniser:
         return torch.tensor([time, self.time_max + velocity, self.time_max + self.velocity_max + note], dtype=torch.int32)
     
     def process_chunk(self, res: torch.Tensor, start_time_chunk:int):
+        print(start_time_chunk)
 
-        # abs_times and msgs are already of the relevant lengths
-        res[:, 0] += int(start_time_chunk)
-        res[:, 0] = res[:, 0] // 10
-
+        # Turn into times relative to the start times
+        # Divide by 10 for tokenisation
+        res[:, 0] = res[:,0] // 10 -  int(start_time_chunk//10)
+        # res[:, 0] = res[:, 0] // 10
+        assert torch.max(res[:,0]) < self.time_max, f"{start_time_chunk//10, res[:,0]}"
         res[:, 1] += self.time_max
         res[:,2] += self.time_max + self.velocity_max
 
         chunk = res.flatten()
         chunk = chunk.to(dtype = torch.int32)
 
-        return chunk
+        return torch.cat([torch.tensor([self.bos_id]), chunk, torch.tensor([self.eos_id])])
     
     def detokenise_midi(self, token_sequence, start_time_ms = 0):
         """
@@ -239,10 +247,21 @@ class Tokeniser:
 
         return messages
     
-    def res_to_messages(self, res, start_time_ms = 0, tempo = 500000, ticks_per_beat=384):
+    def detokenise(self, tokens):
+        res = tokens[tokens != self.pad_id]
+        res = res[res != self.bos_id]
+        res = res[res != self.eos_id]
+
+        res = res.reshape(-1,3)
+        res[:,0] = res[:,0] * 10
+        res[:, 1] -= self.time_max
+        res[:,2] -= self.time_max + self.velocity_max
+        return res
+    
+    @staticmethod
+    def res_to_messages(res, start_time_ms = 0, tempo = 500000, ticks_per_beat=384):
         messages = []
         prev_tick = Tokeniser.time_ms_to_ticks(start_time_ms, tempo, ticks_per_beat)
-
 
         for i in res:
             tick = Tokeniser.time_ms_to_ticks(i[0], tempo, ticks_per_beat)
@@ -254,44 +273,38 @@ class Tokeniser:
         return messages
     
 
+    def collate_fn(self, spectrogram: torch.Tensor, res: torch.Tensor, N, max_len = 512, sampling_rate=16e3, hop_length=128,  ):
+        """
+        Get base midi file first
 
-def collate_fn(spectrogram: torch.Tensor, res: torch.Tensor):
-    """
-    Get base midi file first
+        # Get batch size, say N
+        # Get spectrogram
+        # Choose N starting points
+        
+        """
+        # Batching
+        spectrogram_frames = []
+        chunks = []
+        tok = Tokeniser()
+        spectrogram_start_idxs = torch.randint(low=0, high=spectrogram.shape[1]- max_len, size=(N,))
+        # spectrogram_start_idxs = torch.tensor([0, 8000])
 
-    # Get batch size, say N
-    # Get spectrogram
-    # Choose N starting points
-    
-    """
-    N=4
-    max_len = 512
-    sampling_rate = 16e3
-    hop_length = 128
+        # Times are in milliseconds
+        start_times_ms = spectrogram_start_idxs * hop_length/sampling_rate * 1000
+        # Get sampling length of say 512
+        end_times_ms = (spectrogram_start_idxs + max_len) * hop_length/sampling_rate * 1000
 
-    # Batching
-    spectrogram_frames = []
-    chunks = []
-    tok = Tokeniser()
+        # Make spectrogram frames
+        for i in spectrogram_start_idxs:
+            spectrogram_frames.append(torch.tensor(spectrogram[:, i:i+max_len]))
 
-    spectrogram_start_idxs = torch.randint(low=0, high=spectrogram.shape[1]- max_len, size=(N,))
-    spectrogram_start_idxs = torch.tensor([0, 512, 1024, 1536])
+        # These are absolute times
+        for t0_ms, t1_ms in zip(start_times_ms, end_times_ms):
+            res_between = Tokeniser.get_midi_between(res, t0_ms, t1_ms)
 
-    # Times are in milliseconds
-    start_times_ms = spectrogram_start_idxs * hop_length/sampling_rate * 1000
-    # Get sampling length of say 512
-    end_times_ms = (spectrogram_start_idxs + max_len) * hop_length/sampling_rate * 1000
+            chunks.append(tok.process_chunk(res_between, start_time_chunk=t0_ms))
 
-    # Make spectrogram frames
-    for i in spectrogram_start_idxs:
-        spectrogram_frames.append(spectrogram[:, i:i+max_len])
-
-    #
-    for t0_ms, t1_ms in zip(start_times_ms, end_times_ms):
-        res_between = tok.get_midi_between(res, t0_ms, t1_ms)
-        chunks.append(tok.process_chunk(res_between, start_time_chunk=t0_ms))
-
-    return spectrogram_frames, chunks
+        return torch.stack(spectrogram_frames), pad_sequence(chunks, batch_first=True, padding_value=self.pad_id)
 
 
     
@@ -325,14 +338,23 @@ if __name__ == "__main__":
     midi_processed = tok.process_midi(midi_file)
     print(midi_processed)
     res = tok.get_midi_between(midi_processed, 1000, 6000)
-    messages = tok.res_to_messages(res)
-    from muse.vis import messages_to_wav
+
+
+    spectrograms, inputs = tok.collate_fn(spectrogram, midi_processed, 4)
+    print(spectrograms.shape, inputs.shape)
+
+    # messages = tok.res_to_messages(res)
+    # for m in messages:
+    #     print(m)
+
+    messages = tok.res_to_messages(tok.detokenise(inputs[2]))
+
     for m in messages:
         print(m)
 
-    spectrograms, inputs = collate_fn(spectrogram, midi_processed)
-    print(spectrograms, inputs)
-    # messages_to_wav(messages, tempo = 500000, sample_rate = 16e3, ticks_per_beat = 384, out_file = 'out.wav')
+    messages_to_wav(messages, tempo = 500000, sample_rate = 16e3, ticks_per_beat = 384, out_file = 'out.wav')
+    spectrogram_to_wav(spectrograms[2])
+
     # for i, (time, message) in enumerate(zip(times, messages)):
     #     print(time, message)
     #     if i ==10:

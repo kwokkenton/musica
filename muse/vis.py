@@ -2,6 +2,8 @@ from typing import List
 
 import librosa
 import matplotlib.pyplot as plt
+import numpy as np
+import soundfile as sf
 from midi2audio import FluidSynth
 from mido import Message, MetaMessage, MidiFile, MidiTrack
 
@@ -31,6 +33,15 @@ def messages_to_wav(messages: List[Message], tempo: int, sample_rate:int, ticks_
     fs = FluidSynth(soundfont, sample_rate = sample_rate, gain=0.75)
     fs.midi_to_audio(temp_file, out_file)
 
+def spectrogram_to_wav(spectrogram, sample_rate=16e3, hop_length=128, n_fft=2048):
+    # Now do spectrogram into a wave
+    spectrogram = np.array(spectrogram)
+    S_linear = librosa.feature.inverse.mel_to_stft(librosa.db_to_amplitude(spectrogram), sr=sample_rate, n_fft=n_fft)
+    y = librosa.griffinlim(S_linear, n_fft=n_fft,  hop_length=hop_length)
+    y = y*5
+    sf.write("output_spectrogram.wav", y, samplerate=int(sample_rate))
+    return
+
 def save_out_spectrogram_and_midi(spectrogram, messages, tempo=500000, sample_rate = 16e3, ticks_per_beat = 384):
     """ For verification, saves out generated MIDI
 
@@ -43,10 +54,7 @@ def save_out_spectrogram_and_midi(spectrogram, messages, tempo=500000, sample_ra
 
 
 
-    # Now do spectrogram into a wave
-    S_linear = librosa.feature.inverse.mel_to_stft(librosa.db_to_amplitude(spectrogram), sr=sr, n_fft=n_fft)
-    y = librosa.griffinlim(S_linear, n_fft=n_fft,  hop_length=hop_length)
-    sf.write("output_spectrogram.wav", y, samplerate=int(sr))
+
     
 
 def visualise_spectrogram(S_dB, sr):
