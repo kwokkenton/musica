@@ -1,16 +1,21 @@
+import logging
 import os
+from copy import deepcopy
 
 import librosa
-import matplotlib.pyplot as plt
 import mido
 import numpy as np
 import pandas as pd
 import soundfile as sf
 import torch
-from midi2audio import FluidSynth
 from mido import Message, MetaMessage, MidiFile, MidiTrack
 from torch.utils.data import DataLoader, Dataset
 
+from muse import vis
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 def make_spectrogram(audio_filename, target_sr=16e3, n_fft=2048, hop_length=128, n_mels=512):
     """_summary_
@@ -41,6 +46,8 @@ def make_spectrogram(audio_filename, target_sr=16e3, n_fft=2048, hop_length=128,
     S_dB = librosa.power_to_db(S, ref=np.max)
     return S_dB, target_sr
 
+
+
 class MaestroDataset(Dataset):
     def __init__(self, df_root):
         self.dir = df_root
@@ -62,8 +69,8 @@ class MaestroDataset(Dataset):
 
         S_dB = make_spectrogram(audio_filename, self.target_sr, self.n_fft, self.hop_length, self.n_mels)
         midi_file = mido.MidiFile(midi_filename)
-
-        return torch.tensor(S_dB), midi_file
+        
+        return torch.tensor(S_dB), Tokeniser.process_midi(midi_file)
 
     
 class Tokeniser:
@@ -74,86 +81,122 @@ class Tokeniser:
         self.note_max = 128
     
     @staticmethod
-    def process_midi(midi: MidiFile):
-        """_summary_
-        # In: Librosa midi file
+    def process_midi(midi: MidiFile, tempo = 500000):
+        """ Preprocesses midi file
+
+        midi tempo is microseconds per beat
 
         Args:
             midi (_type_): _description_
+            tempo: microseconds per beat
 
         Returns:
-            Out: Absolute times, in ticks (torch.int32)
-            Msgs (list)
+            Out: Absolute times, in milliseconds (torch.int32)
+            
         """
 
-        times = []
-        msgs = []
+        ticks = []
+        # msgs = []
+        notes = []
+        velocities = []
+
+        ticks_per_beat = deepcopy(midi.ticks_per_beat)
+        logger.info(f'Ticks per beat{ticks_per_beat}')
+
+        # milliseconds is ticks * microseconds per beat * 1/ticks_per_beat / 1000
+
         for i, track in enumerate(midi.tracks):
-            abs_time = 0
+            abs_ticks = 0
             # remove initial track, which is metadata
             if i ==0:
                 continue
             for msg in track:
                 # time is a timedelta, which is to be incremented
-                abs_time += msg.time
+                abs_ticks += msg.time
+                assert msg.time >= 0, f"Negative delta time detected: {msg.time}, msg={msg}"
                 if msg.type in ['note_on', 'note_off']:
-                    msgs.append(msg)
-                    times.append(round(abs_time/10) * 10)
+                    # msg.time = 0
+                    # msgs.append(Message('note_on', note=msg.note, velocity=msg.velocity))
+                    notes.append(msg.note)
+                    velocities.append(msg.velocity)
+                    ticks.append(abs_ticks)
                 else:
                     continue
-        times=  torch.tensor(times, dtype=torch.int32)
-        return times, msgs
+
+        # Abs times are in milliseconds
+        abs_times = Tokeniser.ticks_to_time_ms(torch.tensor(ticks), tempo, ticks_per_beat) 
+        abs_times = torch.round(abs_times/10)*10
+        # abs_times =  abs_times.to(torch.int32)
+        notes = torch.tensor(notes)
+        velocities = torch.tensor(velocities)
+        res = torch.stack([abs_times, notes, velocities], axis=1).to(torch.int32)
+        return res
+    
+    @staticmethod
+    def ticks_to_time_ms(ticks, tempo, ticks_per_beat):
+        return ticks* tempo/ticks_per_beat / 1000
+    
+    @staticmethod
+    def time_ms_to_ticks(time, tempo, ticks_per_beat):
+        time = torch.tensor(time, dtype=torch.float32)
+        return time * ticks_per_beat * 1000/ tempo
     
     @staticmethod
     def collect_indices_between(times, start_time, end_time):
         return [i for i, t in enumerate(times) if start_time <= t <= end_time] 
 
     @staticmethod
-    def get_midi_between(midi: MidiFile, start_index=None, end_index=None, start_time=None, end_time=None):
+    def get_midi_between(res: torch.Tensor, start_time_ms: int, end_time_ms: int):
         """Obtains midi messages between two indices or times.
 
         Args:
             midi (_type_): _description_
-            start_index (_type_, optional): _description_. Defaults to None.
-            end_index (_type_, optional): _description_. Defaults to None.
             start_time (_type_, optional): _description_. Defaults to None.
             end_time (_type_, optional): _description_. Defaults to None.
 
-        Raises:
-            ValueError: _description_
-            ValueError: _description_
-
         Returns:
-            _type_: _description_
+            processed_res
         """
-        # First process entire MIDI file
-        times, msgs = Tokeniser.process_midi(midi)
-
+        assert type(res) is torch.Tensor
         # And then slice
-        if (start_index is not None) and (end_index is not None):
-            if end_index > len(times) - 1:
-                raise ValueError
-            idxs = [start_index, end_index]
-        elif (start_time is not None) and (end_time is not None):
-            # Obtain indices between the provided times
-            idxs = Tokeniser.collect_indices_between(times, start_time, end_time)
-        else: 
-            raise ValueError(f'Start_index:{start_index}')
-        return times[idxs[0]:idxs[-1]], msgs[idxs[0]:idxs[-1]]
+        times = res[:,0] 
+        start_idx = (times > start_time_ms).nonzero(as_tuple=False)
+        # Not inclusive, so we use normal indexing
+        end_idx = (times > end_time_ms).nonzero(as_tuple=False) 
+        assert len(start_idx) > 0
+        assert len(end_idx) > 0
+
+        start_idx = start_idx[0].item()
+        end_idx = end_idx[0].item()
+
+        # Not figured out what happens with this yet (length must be > 0)
+        if end_idx <= start_idx:
+            raise NotImplementedError
+        return res[start_idx:end_idx]
     
-    def tokenise_midi(self, time_ms, velocity, note):
+    def tokenise_midi(self, abs_rel_time:int, velocity:int, note:int):
         # Converts single message into triplets of tokens
-        assert time_ms >= 0 and time_ms < self.time_ms_max
+        assert abs_rel_time >= 0 and abs_rel_time < self.time_ms_max
         assert velocity >= 0 and velocity < self.velocity_max
         assert note >0 and note < self.note_max
+
         # To nearest 10 ms
-        time = time_ms // 10
+        time = int(abs_rel_time // 10)
+
         return torch.tensor([time, self.time_max + velocity, self.time_max + self.velocity_max + note], dtype=torch.int32)
     
-    def process_chunk(self, times, msgs, start_time):
-        chunk = torch.tensor([], dtype=torch.int16)
-        for t, m in zip(times, msgs):
-            chunk = torch.cat([chunk, self.tokenise_midi(t-start_time, m.velocity, m.note)])
+    def process_chunk(self, res: torch.Tensor, start_time_chunk:int):
+
+        # abs_times and msgs are already of the relevant lengths
+        res[:, 0] += int(start_time_chunk)
+        res[:, 0] = res[:, 0] // 10
+
+        res[:, 1] += self.time_max
+        res[:,2] += self.time_max + self.velocity_max
+
+        chunk = res.flatten()
+        chunk = chunk.to(dtype = torch.int32)
+
         return chunk
     
     def detokenise_midi(self, token_sequence, start_time_ms = 0):
@@ -168,6 +211,7 @@ class Tokeniser:
         time_ms = 0
         velocity = 64  # Default velocity
         prev_time_ms = 0
+
         for i in range(0, len(token_sequence), 3):
             t_token = token_sequence[i].item()
             v_token = token_sequence[i + 1].item()
@@ -194,81 +238,62 @@ class Tokeniser:
             messages.append((int(start_time_ms + time_ms), msg))
 
         return messages
-
-def visualise_spectrogram(S_dB, sr):
-    plt.figure(figsize=(10, 4))
-    librosa.display.specshow(S_dB, sr=sr, x_axis='time', y_axis='mel', fmax=8000)
-    plt.colorbar(format='%+2.0f dB')
-    plt.title('Mel-frequency spectrogram')
-    plt.tight_layout()
-    return
+    
+    def res_to_messages(self, res, start_time_ms = 0, tempo = 500000, ticks_per_beat=384):
+        messages = []
+        prev_tick = Tokeniser.time_ms_to_ticks(start_time_ms, tempo, ticks_per_beat)
 
 
-def collate_fn(spectrogram: torch.Tensor, midi_file: MidiFile):
+        for i in res:
+            tick = Tokeniser.time_ms_to_ticks(i[0], tempo, ticks_per_beat)
+            tick_delta = int(tick - prev_tick)
+            prev_tick = tick
+            assert tick_delta >= 0, f"Negative delta time detected: {tick_delta}"
+            msg = Message('note_on', note=int(i[1]), velocity=int(i[2]), time= tick_delta)
+            messages.append(msg)
+        return messages
+    
+
+
+def collate_fn(spectrogram: torch.Tensor, res: torch.Tensor):
+    """
+    Get base midi file first
+
     # Get batch size, say N
     # Get spectrogram
     # Choose N starting points
-
+    
+    """
     N=4
     max_len = 512
     sampling_rate = 16e3
     hop_length = 128
+
+    # Batching
     spectrogram_frames = []
     chunks = []
     tok = Tokeniser()
 
-
     spectrogram_start_idxs = torch.randint(low=0, high=spectrogram.shape[1]- max_len, size=(N,))
     spectrogram_start_idxs = torch.tensor([0, 512, 1024, 1536])
 
-    # Times are in seconds, convert to ticks
-    start_times = spectrogram_start_idxs * hop_length/sampling_rate * 1000
+    # Times are in milliseconds
+    start_times_ms = spectrogram_start_idxs * hop_length/sampling_rate * 1000
     # Get sampling length of say 512
-    end_times = (spectrogram_start_idxs + max_len) * hop_length/sampling_rate * 1000
+    end_times_ms = (spectrogram_start_idxs + max_len) * hop_length/sampling_rate * 1000
 
-
+    # Make spectrogram frames
     for i in spectrogram_start_idxs:
         spectrogram_frames.append(spectrogram[:, i:i+max_len])
 
-    for t0, t1 in zip(start_times, end_times):
-        times, messages = tok.get_midi_between(midi_file, start_time=t0, end_time = t1)
-        chunks.append(tok.process_chunk(times, messages, start_time=t0))
+    #
+    for t0_ms, t1_ms in zip(start_times_ms, end_times_ms):
+        res_between = tok.get_midi_between(res, t0_ms, t1_ms)
+        chunks.append(tok.process_chunk(res_between, start_time_chunk=t0_ms))
 
     return spectrogram_frames, chunks
 
-def save_out_spectrogram_and_midi(spectrogram, messages, tempo=500000, sample_rate = 16e3, ticks_per_beat = 384):
-    """ For verification, saves out generated MIDI
 
-    # 500,000 µs = 120 BPM
-    """
-
-    soundfont = '/Users/kenton/projects/mlx-institute/musica/SGM-v2.01-NicePianosGuitarsBass-V1.2.sf2'
-    temp_file = 'custom_output.mid'
-
-    # Converts MIDI into a track
-    mid = MidiFile(ticks_per_beat = ticks_per_beat)
-    track0 = MidiTrack()
-    track0.append(MetaMessage('set_tempo', tempo=tempo, time=0))
-    track0.append(MetaMessage('time_signature', numerator=4, denominator=4,
-                        clocks_per_click=24, notated_32nd_notes_per_beat=8, time=0))
-    track0.append(MetaMessage('end_of_track', time=1))
-    track = MidiTrack()
-    mid.tracks.append(track)
-
-    for i in tok.detokenise_midi(messages):
-        track.append(i[1])
-
-    track.append(MetaMessage('end_of_track', time=1))
-    mid.save(temp_file)
-
-    # using the default sound font in 44100 Hz sample rate
-    fs = FluidSynth(soundfont, sample_rate = sample_rate, gain=0.75)
-    fs.midi_to_audio(temp_file, 'output_midi.wav')
-
-    # Now do spectrogram into a wave
-    S_linear = librosa.feature.inverse.mel_to_stft(librosa.db_to_amplitude(spectrogram), sr=sr, n_fft=n_fft)
-    y = librosa.griffinlim(S_linear, n_fft=n_fft,  hop_length=hop_length)
-    sf.write("output_spectrogram.wav", y, samplerate=int(sr))
     
 if __name__ == "__main__":
     midi_path = '/Users/kenton/Desktop/2008/MIDI-Unprocessed_01_R1_2008_01-04_ORIG_MID--AUDIO_01_R1_2008_wav--1.midi'
@@ -297,16 +322,23 @@ if __name__ == "__main__":
     # ds = MaestroDataset()
     spectrogram, sr = make_spectrogram(wav_path, n_mels=512)
     midi_file = mido.MidiFile(midi_path)
-    s, m = collate_fn(spectrogram, midi_file)
+    midi_processed = tok.process_midi(midi_file)
+    print(midi_processed)
+    res = tok.get_midi_between(midi_processed, 1000, 6000)
+    messages = tok.res_to_messages(res)
+    from muse.vis import messages_to_wav
+    for m in messages:
+        print(m)
 
-    times, messages = tok.process_midi(midi_file)
+    spectrograms, inputs = collate_fn(spectrogram, midi_processed)
+    print(spectrograms, inputs)
+    # messages_to_wav(messages, tempo = 500000, sample_rate = 16e3, ticks_per_beat = 384, out_file = 'out.wav')
+    # for i, (time, message) in enumerate(zip(times, messages)):
+    #     print(time, message)
+    #     if i ==10:
+    #         break
 
-    for i, (time, message) in enumerate(zip(times, messages)):
-        print(time, message)
-        if i ==10:
-            break
-
-    print(tok.detokenise_midi(m[0]))
+    # print(tok.detokenise_midi(m[0]))
 
 
     
