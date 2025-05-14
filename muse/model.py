@@ -1,3 +1,5 @@
+from copy import deepcopy
+
 import mido
 import torch
 from torch import nn
@@ -5,6 +7,18 @@ from torch import nn
 from muse.data import AudioProcessor, DataProcessor, Tokeniser
 from muse.utils import count_trainable_params
 
+
+def get_decoder_inputs_and_targets(y: torch.Tensor,  
+                                eos_id: int, 
+                                pad_id: int) -> tuple[torch.Tensor, torch.Tensor]:
+    # Want the model to predict all but the last token and so we slice until it
+    # Replace <eos> with <pad> also as it has to predict it
+    text_inputs = deepcopy(y)[:, :-1]
+    text_inputs[text_inputs == eos_id] = pad_id
+
+    # Targets are all but the first token (don't predict <bos>)
+    text_targets = deepcopy(y)[:, 1:]
+    return text_inputs, text_targets
 
 def calculate_accuracy(scores, y, pad_token_id=None):
     # scores: B, N, N_classes

@@ -54,7 +54,7 @@ class AudioProcessor:
 
         # Convert to decibels (log scale)
         S_dB = librosa.power_to_db(S, ref=np.max)
-        return S_dB, self.target_sr
+        return S_dB
     
     def spectrogram_idx_to_time_ms(self, idx):
         return idx * self.hop_length/self.sampling_rate * 1000
@@ -319,7 +319,7 @@ class DataProcessor:
         midi_file = mido.MidiFile(midi_path)
         return self.make_spectrogram(wav_path), self.process_midi(midi_file)
     
-    def collate_fn(self, spectrogram: torch.Tensor, res: torch.Tensor):
+    def collate_fn(self, batch: list):
         """
         Get base midi file first
 
@@ -328,6 +328,7 @@ class DataProcessor:
         # Choose N starting points
 
         """
+        spectrogram, res = batch[0]
         # Batching
         spectrogram_frames = []
         chunks = []
@@ -392,13 +393,15 @@ class MaestroDatasetSingle(Dataset):
         self.midi_filename = midi_path
         self.audio_filename = wav_path
         self.dp = dp
+        
 
     def __len__(self):
         return 1
 
     def __getitem__(self, index):
+        # Returns entire file 
         S_dB, midi_file = self.dp(self.audio_filename, self.midi_filename) 
-        return torch.tensor(S_dB), self.dp.process_midi(midi_file)
+        return S_dB, midi_file
 
     
 if __name__ == '__main__':
@@ -426,7 +429,7 @@ if __name__ == '__main__':
     # ds = MaestroDataset()
     # Obtain mock data
 
-    spectrogram, sr = ap.make_spectrogram(wav_path)
+    spectrogram= ap.make_spectrogram(wav_path)
     midi_file = mido.MidiFile(midi_path)
     midi_processed = tok.process_midi(midi_file)
     print(midi_processed)

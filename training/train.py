@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from muse.data import DataProcessor, MaestroDatasetSingle
-from muse.model import calculate_accuracy
+from muse.model import calculate_accuracy, get_decoder_inputs_and_targets
 from muse.utils import count_trainable_params, get_device, get_wandb_checkpoint_path
 
 logger = logging.getLogger(__name__)
@@ -32,29 +32,22 @@ class Validator:
 
                 # THIS IS EXACTLY THE SAME CODE AS THE FORWARD -----------------
 
-                processed_images, processed_text, attention_mask = model.process_batch(
-                    x, y,
-                )
-                text_inputs, input_attention_mask, text_targets = get_text_inputs_and_targets(
-                    processed_text,
-                    attention_mask,
+                inputs, targets = get_decoder_inputs_and_targets(
+                    y,
                     model.eos_id,
                     model.pad_id,
                 )
-                processed_images = processed_images.to(self.device)
-                text_inputs = text_inputs.to(self.device)
-                text_targets = text_targets.to(self.device)
-                input_attention_mask = input_attention_mask.to(self.device)
+            
+                x = x.to(self.device)
+                inputs = inputs.to(self.device)
+                targets = targets.to(self.device)
                 # Scores are (unnormalised) logits
-                scores = model(
-                    processed_images, text_inputs,
-                    input_attention_mask,
-                )
+                scores = model(x, inputs)
+
                 # Then do the loss
                 loss = loss_fn(
-                    scores.view(
-                        text_targets.numel(), -1,
-                    ), text_targets.view(-1),
+                    scores.view(targets.numel(), -1),
+                    targets.view(-1),
                 )
                 # -------------------------------------------------------------------
 
@@ -62,11 +55,11 @@ class Validator:
 
                 # SAME CODE AS IN PER BATCH EVALUATION  -----------------
                 _, correct = calculate_accuracy(
-                    scores, text_targets, pad_token_id=model.pad_id,
+                    scores, targets, pad_token_id=model.pad_id,
                 )
                 # -------------------------------------------------------------------
                 total_correct += correct
-                count += torch.numel(text_targets)
+                count += torch.numel(targets)
 
         return total_loss / len(self.valid_dl), total_correct / count
 
@@ -74,8 +67,8 @@ class Validator:
 class Trainer:
     def __init__(
         self,
-        train_ds: torch.utils.data.Dataset,
-        val_ds: torch.utils.data.Dataset,
+        train_dl: torch.utils.data.DataLoader,
+        val_dl: torch.utils.data.DataLoader,
         setup_config: dict,
         device: torch.device,
     ):
@@ -85,26 +78,19 @@ class Trainer:
         self.num_workers = setup_config.get('num_workers')
 
         self.device = device
-        self.train_ds = train_ds
-        self.val_ds = val_ds
+
         # Set up datasets and dataloaders
 
-        self.train_dl = DataLoader(
-            self.train_ds,
-            batch_size=1,
-            shuffle=True,
-            drop_last=True,
-            num_workers=self.num_workers,
-            collate_fn=collate_fn,
-        )
-        self.val_dl = DataLoader(
-            self.val_ds,
-            batch_size=self.batch_size,
-            shuffle=False,
-            drop_last=True,
-            num_workers=self.num_workers,
-            collate_fn=collate_fn,
-        )
+        self.train_dl = train_dl
+        self.val_dl = val_dl
+        # self.val_dl = DataLoader(
+        #     self.val_ds,
+        #     batch_size=self.batch_size,
+        #     shuffle=False,
+        #     drop_last=True,
+        #     num_workers=self.num_workers,
+        #     collate_fn=collate_fn,
+        # )
 
         self.validator = Validator(self.val_dl, self.device)
 
@@ -130,26 +116,22 @@ class Trainer:
 
             # CHANGE THIS-------------------------------------------------------
             # Training forward code
-            processed_images, processed_text, attention_mask = model.process_batch(
-                x, y,
-            )
-            text_inputs, input_attention_mask, text_targets = get_text_inputs_and_targets(
-                processed_text,
-                attention_mask,
-                model.eos_id,
-                model.pad_id,
-            )
-            processed_images = processed_images.to(self.device)
-            text_inputs = text_inputs.to(self.device)
-            text_targets = text_targets.to(self.device)
-            input_attention_mask = input_attention_mask.to(self.device)
+            inputs, targets = get_decoder_inputs_and_targets(
+                    y,
+                    model.eos_id,
+                    model.pad_id,
+                )
+            
+            x = x.to(self.device)
+            inputs = inputs.to(self.device)
+            targets = targets.to(self.device)
             # Scores are (unnormalised) logits
-            scores = model(processed_images, text_inputs, input_attention_mask)
+            scores = model(x, inputs)
 
             # Then do the loss
             loss = loss_fn(
-                scores.view(text_targets.numel(), -1),
-                text_targets.view(-1),
+                scores.view(targets.numel(), -1),
+                targets.view(-1),
             )
             # -------------------------------------------------------------------
             loss.backward()
@@ -162,22 +144,22 @@ class Trainer:
                 # CHANGE THIS---------------------------------------------------
                 # Logs and sanity checking code
                 logger.info(
-                    f'Correct seq:\t{model.text_tokenizer.decode(text_targets[0])}',
+                    f'Correct seq:\t{targets[0]}',
                 )
                 logger.info(
-                    f'Predicted seq:\t{model.text_tokenizer.decode(scores.argmax(-1)[0])}',
+                    f'Predicted seq:\t{scores.argmax(-1)[0]}',
                 )
 
-                with torch.no_grad():
-                    # Predict first token
-                    generated = model.forward_sequential(processed_images[0:1])
-                    logger.info(
-                        f'Sequentially predicted seq:\t{model.text_tokenizer.decode(generated[0])}',
-                    )
+                # with torch.no_grad():
+                #     # Predict first token
+                #     generated = model.forward_sequential(x[0:1])
+                #     logger.info(
+                #         f'Sequentially predicted seq:\t{model.text_tokenizer.decode(generated[0])}',
+                #     )
 
                 # Calculate accuracy metric
                 accuracy, _ = calculate_accuracy(
-                    scores, text_targets, pad_token_id=model.pad_id,
+                    scores, targets, pad_token_id=model.pad_id,
                 )
                 ppl = torch.exp(loss)
                 # loss per batch
@@ -304,19 +286,23 @@ if __name__ == '__main__':
 
     midi_path = '/Users/kenton/Desktop/2008/MIDI-Unprocessed_01_R1_2008_01-04_ORIG_MID--AUDIO_01_R1_2008_wav--1.midi'
     wav_path = '/Users/kenton/Desktop/2008/MIDI-Unprocessed_01_R1_2008_01-04_ORIG_MID--AUDIO_01_R1_2008_wav--1.wav'
-    dp = DataProcessor(16)
-    ds = MaestroDatasetSingle(wav_path, midi_path, dp)
 
-    model_config = {'d_model': 512,
+    dp = DataProcessor(batch_size=4)
+
+    train_ds = MaestroDatasetSingle(wav_path, midi_path, dp)
+    model_config = {'d_model': 256,
                 'enc_dims': dp.ap.n_mels, 
                 'enc_max_len': dp.max_enc_len,
                 'dec_max_len': dp.max_dec_len,
-                'dec_vocab_size': dp.tok.vocab_size}
+                'dec_vocab_size': dp.tok.vocab_size,
+                'eos_id':dp.tok.eos_id,
+                'bos_id':dp.tok.bos_id,
+                'pad_id':dp.tok.pad_id}
     
     # Config parameters
     setup_config = {
         'batch_size': 32,
-        'num_workers': 4,
+        'num_workers': 1,
     }
 
     # Training configs
@@ -324,10 +310,10 @@ if __name__ == '__main__':
         'project_name': 'mlx-week4-image-captioning',
         'model_name': 'transformer_captioner',
         'epochs': 25,
-        'lr': 1e-6,
+        'lr': 1e-3,
         'log_locally': False,
         'log_to_wandb': log_to_wandb,
-        'batches_print_frequency': 100,
+        'batches_print_frequency': 1,
         'checkpoint_folder': 'checkpoints',
     }
 
@@ -335,12 +321,20 @@ if __name__ == '__main__':
 
     model = MusicTranscriber(model_config)
 
+    # One song per batch
+    train_dl = DataLoader(
+            train_ds,
+            batch_size=1,
+            shuffle=True,
+            drop_last=True,
+            num_workers=setup_config.get('num_workers'),
+            collate_fn=dp.collate_fn,
+        )
+
     num_params = count_trainable_params(model)
     logger.info(f'There are {num_params} trainable parameters in the model.')
     logger.info(model)
 
-    train_ds = ds
-    val_ds = None
 
     optimiser = torch.optim.Adam(
         model.trainable_params(), lr=training_config.get('lr'),
@@ -363,8 +357,8 @@ if __name__ == '__main__':
     # Ignore pad id
     loss_fn = torch.nn.CrossEntropyLoss(ignore_index=model.pad_id)
     trainer = Trainer(
-        train_ds=train_ds,
-        val_ds=val_ds,
+        train_dl=train_dl,
+        val_dl=train_dl,
         setup_config=setup_config,
         device=device,
     )
