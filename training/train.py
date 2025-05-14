@@ -269,12 +269,12 @@ if __name__ == '__main__':
         )
         parser.add_argument(
             '--epochs',
-            required=True,
+            default=10,
             type=int
         )
         parser.add_argument(
             '--batch_size',
-            required=True,
+            default=2,
             type=int
         )
 

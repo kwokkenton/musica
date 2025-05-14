@@ -326,6 +326,7 @@ class MaestroDataset(Dataset):
         return len(self.df)
 
     def __getitem__(self, index):
+        logger.info(f'Loading {self.df.iloc[index]["midi_filename"]}.')
         midi_filename = os.path.join(
             self.dir, self.df.iloc[index]['midi_filename'])
         audio_filename = os.path.join(
