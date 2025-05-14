@@ -9,7 +9,7 @@ import pandas as pd
 import torch
 from mido import Message, MetaMessage, MidiFile, MidiTrack
 from torch.nn.utils.rnn import pad_sequence
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import Dataset
 
 from muse.vis import messages_to_wav, spectrogram_to_wav
 
@@ -58,33 +58,6 @@ class AudioProcessor:
     
     def spectrogram_idx_to_time_ms(self, idx):
         return idx * self.hop_length/self.sampling_rate * 1000
-    
-class MaestroDataset(Dataset):
-    def __init__(self, df_root):
-        self.dir = df_root
-        self.df = pd.read_csv(os.path.join(df_root, 'maestro-v2.0.0.csv'))
-        self.df = self.df[self.df['year'].isin([2008, 2009])]
-
-        self.n_fft = 2048
-        self.hop_length = 128
-        self.n_mels = 256
-        self.target_sr = 16e3
-
-    def __len__(self):
-        return len(self.df)
-
-    def __getitem__(self, index):
-        midi_filename = os.path.join(
-            self.dir, self.df.iloc[index]['midi_filename'])
-        audio_filename = os.path.join(
-            self.dir, self.df.iloc[index]['audio_filename'])
-
-        S_dB = make_spectrogram(
-            audio_filename, self.target_sr, self.n_fft, self.hop_length, self.n_mels)
-        midi_file = mido.MidiFile(midi_filename)
-
-        return torch.tensor(S_dB), Tokeniser.process_midi(midi_file)
-
 
 class Tokeniser:
     def __init__(self):
@@ -95,9 +68,9 @@ class Tokeniser:
 
         self.bos_id = 6000+128+128
         self.eos_id = self.bos_id + 1
-        self.pad_id = self.bos_id
+        self.pad_id = self.bos_id + 2
 
-        self.vocab_size = self.eos_id + 1
+        self.vocab_size = self.pad_id + 1
 
     @staticmethod
     def process_midi(midi: MidiFile, tempo=500000):
@@ -342,6 +315,10 @@ class DataProcessor:
         self.make_spectrogram = self.ap.make_spectrogram
         self.process_midi = self.tok.process_midi
     
+    def __call__(self, wav_path:str, midi_path:str):
+        midi_file = mido.MidiFile(midi_path)
+        return self.make_spectrogram(wav_path), self.process_midi(midi_file)
+    
     def collate_fn(self, spectrogram: torch.Tensor, res: torch.Tensor):
         """
         Get base midi file first
@@ -382,6 +359,48 @@ class DataProcessor:
 
         return torch.stack(spectrogram_frames), pad_sequence(chunks, batch_first=True, padding_value=self.tok.pad_id)
 
+class MaestroDataset(Dataset):
+    def __init__(self, df_root):
+        super().__init__()
+        self.dir = df_root
+        self.df = pd.read_csv(os.path.join(df_root, 'maestro-v2.0.0.csv'))
+        self.df = self.df[self.df['year'].isin([2008, 2009])]
+
+        self.n_fft = 2048
+        self.hop_length = 128
+        self.n_mels = 256
+        self.target_sr = 16e3
+
+    def __len__(self):
+        return len(self.df)
+
+    def __getitem__(self, index):
+        midi_filename = os.path.join(
+            self.dir, self.df.iloc[index]['midi_filename'])
+        audio_filename = os.path.join(
+            self.dir, self.df.iloc[index]['audio_filename'])
+
+        S_dB = make_spectrogram(
+            audio_filename, self.target_sr, self.n_fft, self.hop_length, self.n_mels)
+        midi_file = mido.MidiFile(midi_filename)
+
+        return torch.tensor(S_dB), Tokeniser.process_midi(midi_file)
+
+class MaestroDatasetSingle(Dataset):
+    def __init__(self, wav_path, midi_path , dp: DataProcessor):
+        super().__init__()
+        self.midi_filename = midi_path
+        self.audio_filename = wav_path
+        self.dp = dp
+
+    def __len__(self):
+        return 1
+
+    def __getitem__(self, index):
+        S_dB, midi_file = self.dp(self.audio_filename, self.midi_filename) 
+        return torch.tensor(S_dB), self.dp.process_midi(midi_file)
+
+    
 if __name__ == '__main__':
     midi_path = '/Users/kenton/Desktop/2008/MIDI-Unprocessed_01_R1_2008_01-04_ORIG_MID--AUDIO_01_R1_2008_wav--1.midi'
     wav_path = '/Users/kenton/Desktop/2008/MIDI-Unprocessed_01_R1_2008_01-04_ORIG_MID--AUDIO_01_R1_2008_wav--1.wav'

@@ -36,6 +36,11 @@ class MusicTranscriber(nn.Module):
         self.dec_max_len = model_dict.get('dec_max_len') 
         self.dec_vocab_size = model_dict.get('dec_vocab_size')
 
+        self.eos_id = model_dict.get('eos_id')
+        self.bos_id = model_dict.get('bos_id')
+        self.pad_id = model_dict.get('pad_id')
+
+
         self.transformer_model = nn.Transformer(d_model = self.d_model, batch_first = True, )
 
         # Initialise positional encodings
@@ -45,7 +50,7 @@ class MusicTranscriber(nn.Module):
         nn.init.normal_(self.decoder_pos_embeddings, std=0.02)
 
         self.encoder_mlp = nn.Linear(self.enc_dims, self.d_model)
-        self.decoder_emb = nn.Embedding(self.dec_vocab_size, self.d_model)
+        self.decoder_emb = nn.Embedding(self.dec_vocab_size, self.d_model, padding_idx = self.pad_id)
         self.decoder_classifier = nn.Linear(self.d_model, self.dec_vocab_size)
 
     def forward(self, x, y):
@@ -100,11 +105,14 @@ if __name__=="__main__":
     spectrograms, inputs = dp.collate_fn(spectrogram, midi_processed)
 
 
-    model_dict = {'d_model': 256,
+    model_dict = {'d_model': 512,
                   'enc_dims': dp.ap.n_mels, 
                   'enc_max_len': dp.max_enc_len,
                   'dec_max_len': dp.max_dec_len,
-                  'dec_vocab_size': dp.tok.vocab_size
+                  'dec_vocab_size': dp.tok.vocab_size,
+                  'bos_id': dp.tok.bos_id,
+                  'eos_id': dp.tok.eos_id,
+                  'pad_id': dp.tok.pad_id
                   }
     
     mt = MusicTranscriber(model_dict)
