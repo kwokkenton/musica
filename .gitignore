@@ -6,3 +6,4 @@ wandb/*
 *.pth
 app/backend/node_modules
 data/
+muse.egg-info

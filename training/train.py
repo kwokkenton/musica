@@ -7,7 +7,7 @@ import wandb
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from muse.data import DataProcessor, MaestroDatasetSingle
+from muse.data import DataProcessor, MaestroDataset, MaestroDatasetSingle
 from muse.model import calculate_accuracy, get_decoder_inputs_and_targets
 from muse.utils import count_trainable_params, get_device, get_wandb_checkpoint_path
 
@@ -268,6 +268,17 @@ if __name__ == '__main__':
             description='Example script with a --log_to_wandb flag',
         )
         parser.add_argument(
+            '--epochs',
+            required=True,
+            type=int
+        )
+        parser.add_argument(
+            '--batch_size',
+            required=True,
+            type=int
+        )
+
+        parser.add_argument(
             '--log_to_wandb',
             action='store_true',
             help='If set, enable logging to Weights & Biases',
@@ -278,18 +289,40 @@ if __name__ == '__main__':
             required=False,
             help="Wandb identifier, e.g., 'kwokkenton-individual/mlx-week2-search-engine/towers_rnn:latest'",
         )
+
+        parser.add_argument(
+            '--path_to_data_dir',
+            type=str,
+            required=True,
+            help='If set, enable logging to Weights & Biases',
+        )
+
+        parser.add_argument(
+            '--path_to_csv',
+            type=str,
+            required=True,
+            help='If set, enable logging to Weights & Biases',
+        )
+
         return parser.parse_args()
 
     args = parse_args()
     log_to_wandb = args.log_to_wandb
     wandb_checkpoint = args.wandb_checkpoint
+    path_to_data_dir = args.path_to_data_dir
+    path_to_csv = args.path_to_csv
+    epochs = args.epochs
+    batch_size = args.batch_size
 
-    midi_path = '/Users/kenton/Desktop/2008/MIDI-Unprocessed_01_R1_2008_01-04_ORIG_MID--AUDIO_01_R1_2008_wav--1.midi'
-    wav_path = '/Users/kenton/Desktop/2008/MIDI-Unprocessed_01_R1_2008_01-04_ORIG_MID--AUDIO_01_R1_2008_wav--1.wav'
 
-    dp = DataProcessor(batch_size=4)
+    # midi_path = '/Users/kenton/Desktop/2008/MIDI-Unprocessed_01_R1_2008_01-04_ORIG_MID--AUDIO_01_R1_2008_wav--1.midi'
+    # wav_path = '/Users/kenton/Desktop/2008/MIDI-Unprocessed_01_R1_2008_01-04_ORIG_MID--AUDIO_01_R1_2008_wav--1.wav'
 
-    train_ds = MaestroDatasetSingle(wav_path, midi_path, dp)
+    dp = DataProcessor(batch_size=batch_size)
+
+    train_ds = MaestroDataset(path_to_data_dir, path_to_csv, dp)
+    val_ds = MaestroDataset(path_to_data_dir, path_to_csv, dp, train=False)
+
     model_config = {'d_model': 256,
                 'enc_dims': dp.ap.n_mels, 
                 'enc_max_len': dp.max_enc_len,
@@ -301,7 +334,7 @@ if __name__ == '__main__':
     
     # Config parameters
     setup_config = {
-        'batch_size': 32,
+        'batch_size': batch_size,
         'num_workers': 1,
     }
 
@@ -309,7 +342,7 @@ if __name__ == '__main__':
     training_config = {
         'project_name': 'mlx-week4-image-captioning',
         'model_name': 'transformer_captioner',
-        'epochs': 25,
+        'epochs': epochs,
         'lr': 1e-4,
         'log_locally': False,
         'log_to_wandb': log_to_wandb,
@@ -326,6 +359,15 @@ if __name__ == '__main__':
             train_ds,
             batch_size=1,
             shuffle=True,
+            drop_last=True,
+            num_workers=setup_config.get('num_workers'),
+            collate_fn=dp.collate_fn,
+        )
+    
+    val_dl = DataLoader(
+            val_ds,
+            batch_size=1,
+            shuffle=False,
             drop_last=True,
             num_workers=setup_config.get('num_workers'),
             collate_fn=dp.collate_fn,
@@ -358,7 +400,7 @@ if __name__ == '__main__':
     loss_fn = torch.nn.CrossEntropyLoss(ignore_index=model.pad_id)
     trainer = Trainer(
         train_dl=train_dl,
-        val_dl=train_dl,
+        val_dl=val_dl,
         setup_config=setup_config,
         device=device,
     )
