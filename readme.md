@@ -73,6 +73,13 @@ brew install fluidsynth
 https://github.com/bzamecnik/midi2audio/tree/master?tab=readme-ov-file
 ```
 
+## Training
+
+Loss: Cross entropy
+
+1. Model learns to predict the token of 0 duration, as it means 'key-off'
+2.
+
 ## References
 
 https://engineering.atspotify.com/2022/06/meet-basic-pitch/

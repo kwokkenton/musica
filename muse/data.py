@@ -177,17 +177,6 @@ class Tokeniser:
             # Clone or else downstream processing is affected
             return res[start_idx:end_idx].clone()
 
-    # def tokenise_midi(self, abs_rel_time: int, velocity: int, note: int):
-    #     # Converts single message into triplets of tokens
-    #     assert abs_rel_time >= 0 and abs_rel_time < self.time_ms_max
-    #     assert velocity >= 0 and velocity < self.velocity_max
-    #     assert note > 0 and note < self.note_max
-
-    #     # To nearest 10 ms
-    #     time = int(abs_rel_time // 10)
-
-    #     return torch.tensor([time, self.time_max + velocity, self.time_max + self.velocity_max + note], dtype=torch.int32)
-
     def process_chunk(self, res: torch.Tensor, start_time_chunk: int):
         """ Tokenises N instructions into 
 
@@ -232,48 +221,6 @@ class Tokeniser:
         assert torch.max(chunk) < self.vocab_size 
         assert torch.min(chunk) >= 0
         return chunk
-
-    # def detokenise_midi(self, token_sequence, start_time_ms=0):
-    #     """
-    #     Convert a flat token sequence into a list of MIDI messages and times.
-    #     token_sequence: 1D tensor of shape (N,) where N is a multiple of 3.
-    #     Returns: list of (absolute_time_ms, mido.Message)
-    #     """
-    #     assert token_sequence.ndim == 1 and token_sequence.size(0) % 3 == 0
-
-    #     messages = []
-    #     time_ms = 0
-    #     velocity = 64  # Default velocity
-    #     prev_time_ms = 0
-
-    #     for i in range(0, len(token_sequence), 3):
-    #         t_token = token_sequence[i].item()
-    #         v_token = token_sequence[i + 1].item()
-    #         n_token = token_sequence[i + 2].item()
-
-    #         # Decode absolute time (quantized to 10ms)
-    #         time_ms = t_token * 10
-
-    #         # Decode velocity
-    #         velocity = v_token - self.time_max
-    #         if velocity < 0 or velocity >= self.velocity_max:
-    #             raise ValueError(f'Invalid velocity token: {v_token}')
-
-    #         # Decode note
-    #         note = n_token - self.time_max - self.velocity_max
-    #         if note <= 0 or note >= self.note_max:
-    #             raise ValueError(f'Invalid note token: {n_token}')
-
-    #         # Determine message type
-
-    #         msg = Message('note_on', note=note, velocity=velocity,
-    #                       time=time_ms - prev_time_ms)
-    #         prev_time_ms = time_ms
-
-    #         messages.append((int(start_time_ms + time_ms), msg))
-
-    #     return messages
-
     def detokenise(self, tokens):
         res = tokens[tokens != self.pad_id]
         res = res[res != self.bos_id]
@@ -429,19 +376,22 @@ if __name__ == '__main__':
     # ds = MaestroDataset()
     # Obtain mock data
 
-    spectrogram= ap.make_spectrogram(wav_path)
-    midi_file = mido.MidiFile(midi_path)
-    midi_processed = tok.process_midi(midi_file)
-    print(midi_processed)
-    spectrograms, inputs = tok.collate_fn(spectrogram, midi_processed, ap, 4)
-    print(spectrograms.shape, inputs.shape)
+    # spectrogram= ap.make_spectrogram(wav_path)
+    # midi_file = mido.MidiFile(midi_path)
+    # midi_processed = tok.process_midi(midi_file)
+    # print(midi_processed)
+    # print(spectrograms.shape, inputs.shape)
+
+    dp = DataProcessor(batch_size=4)
+    train_ds = MaestroDatasetSingle(wav_path, midi_path, dp)
+    spectrograms, inputs = dp.collate_fn([train_ds[0]])
 
     messages = tok.res_to_messages(tok.detokenise(inputs[2]))
 
     for m in messages:
         print(m)
 
-    messages_to_wav(messages, tempo=500000, sample_rate=16e3,
+    messages_to_wav(messages, tempo=500000, sample_rate=dp.ap.sampling_rate,
                     ticks_per_beat=384, out_file='out.wav')
     spectrogram_to_wav(spectrograms[2])
 

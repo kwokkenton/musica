@@ -310,7 +310,7 @@ if __name__ == '__main__':
         'project_name': 'mlx-week4-image-captioning',
         'model_name': 'transformer_captioner',
         'epochs': 25,
-        'lr': 1e-3,
+        'lr': 1e-4,
         'log_locally': False,
         'log_to_wandb': log_to_wandb,
         'batches_print_frequency': 1,
