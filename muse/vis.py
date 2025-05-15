@@ -1,3 +1,4 @@
+import logging
 from typing import List
 
 import librosa
@@ -7,6 +8,9 @@ import soundfile as sf
 from midi2audio import FluidSynth
 from mido import Message, MetaMessage, MidiFile, MidiTrack
 
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 def messages_to_wav(messages: list[Message], tempo: int, sample_rate: int, ticks_per_beat, out_file):
     """ Converts list of

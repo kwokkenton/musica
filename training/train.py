@@ -248,13 +248,14 @@ class Trainer:
                         'val/accuracy': val_accuracy,
                     })
 
-                    checkpoint_path = os.path.join(
-                        wandb.run.dir, f'{datetime.now().strftime("%Y%m%d_%H%M%S")}.pth',
-                    )
-                    torch.save(checkpoint, checkpoint_path)
-                    artifact = wandb.Artifact(model_name, type='checkpoint')
-                    artifact.add_file(checkpoint_path)
-                    wandb.run.log_artifact(artifact)
+            if log_to_wandb:
+              checkpoint_path = os.path.join(
+                  wandb.run.dir, f'{datetime.now().strftime("%Y%m%d_%H%M%S")}.pth',
+              )
+              torch.save(checkpoint, checkpoint_path)
+              artifact = wandb.Artifact(model_name, type='checkpoint')
+              artifact.add_file(checkpoint_path)
+              wandb.run.log_artifact(artifact)
 
 
 if __name__ == '__main__':
@@ -340,8 +341,8 @@ if __name__ == '__main__':
 
     # Training configs
     training_config = {
-        'project_name': 'mlx-week4-image-captioning',
-        'model_name': 'transformer_captioner',
+        'project_name': 'mlx-week5-music',
+        'model_name': 'transcriber-256',
         'epochs': epochs,
         'lr': 1e-4,
         'log_locally': False,

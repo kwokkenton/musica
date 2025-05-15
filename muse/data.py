@@ -104,10 +104,10 @@ class Tokeniser:
                 abs_ticks += msg.time
                 assert msg.time >= 0, f'Negative delta time detected: {msg.time}, msg={msg}'
                 if msg.type in ['note_on', 'note_off']:
-                    # msg.time = 0
-                    # msgs.append(Message('note_on', note=msg.note, velocity=msg.velocity))
                     notes.append(msg.note)
-                    velocities.append(msg.velocity)
+                    # Binary note on/ note off classification
+                    velocities.append(127 if msg.velocity > 0 else 0)
+                    # velocities.append(msg.velocity)
                     ticks.append(abs_ticks)
                 else:
                     continue
@@ -164,7 +164,7 @@ class Tokeniser:
         # Not inclusive, so we use normal indexing
         end_idx = (times > end_time_ms).nonzero(as_tuple=False)
         assert len(start_idx) > 0
-        assert len(end_idx) > 0
+        assert len(end_idx) > 0, ""
 
         start_idx = start_idx[0].item()
         end_idx = end_idx[0].item()
@@ -206,10 +206,8 @@ class Tokeniser:
             assert torch.min(time_processed) >= 0
             assert torch.max(
                 time_processed) < self.time_max, f'{start_time_chunk//10, time_processed}'
-            res[:, 0] = time_processed
-
-   
             
+            res[:, 0] = time_processed
             res[:, 1] += self.time_max
             res[:, 2] += self.time_max + self.velocity_max
 
@@ -300,10 +298,10 @@ class DataProcessor:
             # No negative times, notes or anything
             assert torch.min(res_between) >= 0
             # assert torch.max(res_between) < self.tok.vocab_size
-            assert torch.min(res_between[1:,0] - res_between[:-1,0]) >=0, "Times are not ascending"
+            if len(res_between) > 1:
+                assert torch.min(res_between[1:,0] - res_between[:-1,0]) >=0, "Times are not ascending"
 
-            chunks.append(self.tok.process_chunk(
-                res_between, start_time_chunk=t0_ms))
+            chunks.append(self.tok.process_chunk(res_between, start_time_chunk=t0_ms))
 
         return torch.stack(spectrogram_frames), pad_sequence(chunks, batch_first=True, padding_value=self.tok.pad_id)
 
@@ -357,38 +355,18 @@ if __name__ == '__main__':
     midi_path = '/Users/kenton/Desktop/2008/MIDI-Unprocessed_01_R1_2008_01-04_ORIG_MID--AUDIO_01_R1_2008_wav--1.midi'
     wav_path = '/Users/kenton/Desktop/2008/MIDI-Unprocessed_01_R1_2008_01-04_ORIG_MID--AUDIO_01_R1_2008_wav--1.wav'
 
-    # # Load the MIDI file
-
-    tok = Tokeniser()
-    ap = AudioProcessor()
-
-    # # times, msgs = tok.get_midi_between(midi_file, start_time=10000, end_time = 20000)
-    # times, msgs = tok.get_midi_between(midi_file, start_index=500, end_index = 1024)
-
-    # for t, m in zip(times[0:10], msgs[0:10]):
-    #     print(t, m)
-    # messages = tok.detokenise_midi(tok.process_chunk(times, msgs), times[0])
-    # for m in messages[0:10]:
-    #     print(m)
+    dp = DataProcessor(batch_size=4)
+    train_ds = MaestroDatasetSingle(wav_path, midi_path, dp)
+    # Create spectrogram
+    spectrograms, inputs = dp.collate_fn([train_ds[0]])
 
     # visualise_spectrogram(spectrogram, sr)
     # plt.savefig('temp.png')
     # print(spectrogram.shape)
     # print(librosa.get_duration(S=spectrogram, n_fft=2048, hop_length=128, sr=sr))
     # ds = MaestroDataset()
-    # Obtain mock data
 
-    # spectrogram= ap.make_spectrogram(wav_path)
-    # midi_file = mido.MidiFile(midi_path)
-    # midi_processed = tok.process_midi(midi_file)
-    # print(midi_processed)
-    # print(spectrograms.shape, inputs.shape)
-
-    dp = DataProcessor(batch_size=4)
-    train_ds = MaestroDatasetSingle(wav_path, midi_path, dp)
-    spectrograms, inputs = dp.collate_fn([train_ds[0]])
-
-    messages = tok.res_to_messages(tok.detokenise(inputs[2]))
+    messages = dp.tok.res_to_messages(dp.tok.detokenise(inputs[2]))
 
     for m in messages:
         print(m)
@@ -396,19 +374,3 @@ if __name__ == '__main__':
     messages_to_wav(messages, tempo=500000, sample_rate=dp.ap.sampling_rate,
                     ticks_per_beat=384, out_file='out.wav')
     spectrogram_to_wav(spectrograms[2])
-
-    # res = tok.get_midi_between(midi_processed, 1000, 6000)
-
-    # messages = tok.res_to_messages(res)
-    # for m in messages:
-    #     print(m)
-
-
-    # for i, (time, message) in enumerate(zip(times, messages)):
-    #     print(time, message)
-    #     if i ==10:
-    #         break
-
-    # print(tok.detokenise_midi(m[0]))
-
-    # save_out_spectrogram_and_midi(s[0], m[0], tempo=500000, )

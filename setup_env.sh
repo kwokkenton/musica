@@ -19,3 +19,5 @@ conda activate musica-env
 # Login manually
 wandb login
 huggingface-cli login
+
+pip install -e .
