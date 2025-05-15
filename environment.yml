@@ -21,4 +21,4 @@ dependencies:
       - mido
       - librosa
       - pretty_midi
-      - miditok
+      - midi2audio
