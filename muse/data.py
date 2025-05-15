@@ -26,7 +26,7 @@ class AudioProcessor:
         self.sampling_rate = self.target_sr
 
     def make_spectrogram(self, audio_filename):
-        """_summary_
+        """Makes log-Mel Spectrogram.
 
         Args:
             audio_filename (_type_): _description_
@@ -36,7 +36,7 @@ class AudioProcessor:
             n_mels (int, optional): _description_. Defaults to 512.
 
         Returns:
-            _type_: _description_
+            spectrogram : shape (n_mels, clip length)
         """
         y, sr = librosa.load(audio_filename, sr=None, mono=True)
         # resample to lower rate
@@ -219,6 +219,7 @@ class Tokeniser:
         assert torch.max(chunk) < self.vocab_size 
         assert torch.min(chunk) >= 0
         return chunk
+    
     def detokenise(self, tokens):
         res = tokens[tokens != self.pad_id]
         res = res[res != self.bos_id]
@@ -262,7 +263,9 @@ class DataProcessor:
     
     def __call__(self, wav_path:str, midi_path:str):
         midi_file = mido.MidiFile(midi_path)
-        return self.make_spectrogram(wav_path), self.process_midi(midi_file)
+        spectrogram = self.make_spectrogram(wav_path)
+        midi_tensor = self.process_midi(midi_file)
+        return spectrogram, midi_tensor
     
     def collate_fn(self, batch: list):
         """
@@ -303,7 +306,8 @@ class DataProcessor:
 
             chunks.append(self.tok.process_chunk(res_between, start_time_chunk=t0_ms))
 
-        return torch.stack(spectrogram_frames), pad_sequence(chunks, batch_first=True, padding_value=self.tok.pad_id)
+        # Permute so it is N, seq_len, num_mels or num_features
+        return torch.stack(spectrogram_frames).permute(0,2,1), pad_sequence(chunks, batch_first=True, padding_value=self.tok.pad_id)
 
 class MaestroDataset(Dataset):
     def __init__(self, data_dir:str, path_to_csv:str, dp, train=True):
@@ -313,11 +317,15 @@ class MaestroDataset(Dataset):
         self.dp = dp
 
         self.df = pd.read_csv(path_to_csv)
-        
+        # Limit to 10 lines
+        self.df = self.df.iloc[0:5]
         # Filter
+        self.df.loc[:3, 'split'] = 'train'
+        self.df.loc[3:5, 'split'] = 'valid' 
+
         split = 'train' if train else 'valid'
         self.df = self.df[self.df['split'] == split]
-
+        
         # self.df = self.df[self.df['year'].isin([2008, 2009])]
 
     def __len__(self):

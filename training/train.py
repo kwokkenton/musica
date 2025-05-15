@@ -3,10 +3,10 @@ import os
 from datetime import datetime
 
 import torch
-import wandb
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+import wandb
 from muse.data import DataProcessor, MaestroDataset, MaestroDatasetSingle
 from muse.model import calculate_accuracy, get_decoder_inputs_and_targets
 from muse.utils import count_trainable_params, get_device, get_wandb_checkpoint_path
@@ -200,6 +200,7 @@ class Trainer:
         )
         project_name = config.get('project_name')
         model_name = config.get('model_name')
+        epochs_per_log = 10
 
         if log_to_wandb:
             run = wandb.init(
@@ -208,38 +209,32 @@ class Trainer:
                 config=config,
             )
 
-        for epoch in range(epochs):
-            logger.info(f'Training: Epoch {epoch + 1} of {epochs}')
-            train_loss, train_accuracy = self.train_one_epoch(
-                model, loss_fn, optimiser, config.get(
-                    'batches_print_frequency',
-                ),
-            )
-            logger.info(
-                f'Validating: Epoch {epoch + 1} of {epochs}.',
-            )
-            # Run validation to sanity check the model
-            val_loss, val_accuracy = self.validator.validate(
-                model, loss_fn,
-            )
-            logger.info(
-                f'Epoch {epoch + 1} of {epochs} train loss: {train_loss}'
-                f'train accuracy: {train_accuracy} val loss: {val_loss}'
-                f'val accuracy: {val_accuracy}',
-            )
-            if log_locally or log_to_wandb:
+        try: 
+            for epoch in range(epochs):
+                logger.info(f'Training: Epoch {epoch + 1} of {epochs}')
+                train_loss, train_accuracy = self.train_one_epoch(
+                    model, loss_fn, optimiser, config.get(
+                        'batches_print_frequency',
+                    ),
+                )
+                logger.info(
+                    f'Validating: Epoch {epoch + 1} of {epochs}.',
+                )
+                # Run validation to sanity check the model
+                val_loss, val_accuracy = self.validator.validate(
+                    model, loss_fn,
+                )
+                logger.info(
+                    f'Epoch {epoch + 1} of {epochs} train loss: {train_loss}'
+                    f'train accuracy: {train_accuracy} val loss: {val_loss}'
+                    f'val accuracy: {val_accuracy}',
+                )
+
                 checkpoint = {
                     'model_state_dict': model.state_dict(),
                     'optimiser_state_dict': optimiser.state_dict(),
-                }
-
-                if log_locally:
-                    checkpoint_path = os.path.join(
-                        checkpoint_folder,
-                        f'{datetime.now().strftime("%Y%m%d_%H%M%S")}.pth',
-                    )
-                    torch.save(checkpoint, checkpoint_path)
-
+                        }
+                
                 if log_to_wandb:
                     wandb.log({
                         'train/loss': train_loss,
@@ -248,14 +243,46 @@ class Trainer:
                         'val/accuracy': val_accuracy,
                     })
 
+                if epoch%epochs_per_log == (epochs_per_log - 1):
+                    if log_locally or log_to_wandb:
+                        if log_locally:
+                            checkpoint_path = os.path.join(
+                                checkpoint_folder,
+                                f'{datetime.now().strftime("%Y%m%d_%H%M%S")}.pth',
+                            )
+                            torch.save(checkpoint, checkpoint_path)
+
+            
+
+                    if log_to_wandb:
+                        checkpoint_path = os.path.join(
+                            wandb.run.dir, f'{datetime.now().strftime("%Y%m%d_%H%M%S")}.pth',
+                        )
+                        torch.save(checkpoint, checkpoint_path)
+                        artifact = wandb.Artifact(model_name, type='checkpoint')
+                        artifact.add_file(checkpoint_path)
+                        wandb.run.log_artifact(artifact)
+
+        # Save in case it crashes
+        except Exception as e:  
+            logger.error(f'Crashed {e}')
+            if log_locally:
+                checkpoint_path = os.path.join(
+                    checkpoint_folder,
+                    f'{datetime.now().strftime("%Y%m%d_%H%M%S")}.pth',
+                )
+                torch.save(checkpoint, checkpoint_path)
+
             if log_to_wandb:
-              checkpoint_path = os.path.join(
-                  wandb.run.dir, f'{datetime.now().strftime("%Y%m%d_%H%M%S")}.pth',
-              )
-              torch.save(checkpoint, checkpoint_path)
-              artifact = wandb.Artifact(model_name, type='checkpoint')
-              artifact.add_file(checkpoint_path)
-              wandb.run.log_artifact(artifact)
+                checkpoint_path = os.path.join(
+                    wandb.run.dir, f'{datetime.now().strftime("%Y%m%d_%H%M%S")}.pth',
+                )
+                torch.save(checkpoint, checkpoint_path)
+                artifact = wandb.Artifact(model_name, type='checkpoint')
+                artifact.add_file(checkpoint_path)
+                wandb.run.log_artifact(artifact)
+        finally:
+            wandb.finish()
 
 
 if __name__ == '__main__':
@@ -283,6 +310,11 @@ if __name__ == '__main__':
             '--log_to_wandb',
             action='store_true',
             help='If set, enable logging to Weights & Biases',
+        )
+        parser.add_argument(
+            '--log_locally',
+            action='store_true',
+            help='If set, enable logging locally.',
         )
         parser.add_argument(
             '--wandb_checkpoint',
@@ -314,6 +346,7 @@ if __name__ == '__main__':
     path_to_csv = args.path_to_csv
     epochs = args.epochs
     batch_size = args.batch_size
+    log_locally = args.log_locally
 
 
     # midi_path = '/Users/kenton/Desktop/2008/MIDI-Unprocessed_01_R1_2008_01-04_ORIG_MID--AUDIO_01_R1_2008_wav--1.midi'
@@ -344,8 +377,8 @@ if __name__ == '__main__':
         'project_name': 'mlx-week5-music',
         'model_name': 'transcriber-256',
         'epochs': epochs,
-        'lr': 1e-4,
-        'log_locally': False,
+        'lr': 5e-5,
+        'log_locally': log_locally,
         'log_to_wandb': log_to_wandb,
         'batches_print_frequency': 1,
         'checkpoint_folder': 'checkpoints',
@@ -384,18 +417,19 @@ if __name__ == '__main__':
     )
 
     # Load previously trained model
-    if wandb_checkpoint:
-        checkpoint_path = get_wandb_checkpoint_path(
-            wandb_checkpoint,
-        )
+    checkpoint_path = '/root/musica/checkpoints/20250515_134856.pth'
+    # if wandb_checkpoint:
+    #     checkpoint_path = get_wandb_checkpoint_path(
+    #         wandb_checkpoint,
+    #     )
 
-        # Load the model
-        checkpoint = torch.load(
-            checkpoint_path,
-            map_location=device,
-            weights_only=True,
-        )
-        model.load_state_dict(checkpoint['model_state_dict'])
+    # Load the model
+    checkpoint = torch.load(
+        checkpoint_path,
+        map_location=device,
+        weights_only=True,
+    )
+    model.load_state_dict(checkpoint['model_state_dict'])
 
     # Ignore pad id
     loss_fn = torch.nn.CrossEntropyLoss(ignore_index=model.pad_id)
