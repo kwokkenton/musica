@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 logging.basicConfig(level=logging.INFO)
 
+
 def messages_to_wav(messages: list[Message], tempo: int, sample_rate: int, ticks_per_beat, out_file):
     """ Converts list of
     """
@@ -46,7 +47,8 @@ def spectrogram_to_wav(spectrogram, sample_rate=16e3, hop_length=128, n_fft=2048
     # Now do spectrogram into a wave
     spectrogram = np.array(spectrogram)
     S_linear = librosa.feature.inverse.mel_to_stft(
-        librosa.db_to_amplitude(spectrogram), sr=sample_rate, n_fft=n_fft)
+        librosa.db_to_amplitude(spectrogram), sr=sample_rate, n_fft=n_fft,
+    )
     y = librosa.griffinlim(S_linear, n_fft=n_fft,  hop_length=hop_length)
     y = y*5
     sf.write('output_spectrogram.wav', y, samplerate=int(sample_rate))
@@ -65,7 +67,8 @@ def save_out_spectrogram_and_midi(spectrogram, messages, tempo=500000, sample_ra
 def visualise_spectrogram(S_dB, sr):
     plt.figure(figsize=(10, 4))
     librosa.display.specshow(
-        S_dB, sr=sr, x_axis='time', y_axis='mel', fmax=8000)
+        S_dB, sr=sr, x_axis='time', y_axis='mel', fmax=8000,
+    )
     plt.colorbar(format='%+2.0f dB')
     plt.title('Mel-frequency spectrogram')
     plt.tight_layout()

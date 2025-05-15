@@ -17,12 +17,13 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 logging.basicConfig(level=logging.INFO)
 
+
 class AudioProcessor:
-    def __init__(self, ):
-        self.target_sr= 16e3 
-        self.n_fft= 2048 
-        self.hop_length= 128 
-        self.n_mels= 512
+    def __init__(self):
+        self.target_sr = 16e3
+        self.n_fft = 2048
+        self.hop_length = 128
+        self.n_mels = 512
         self.sampling_rate = self.target_sr
 
     def make_spectrogram(self, audio_filename):
@@ -55,9 +56,10 @@ class AudioProcessor:
         # Convert to decibels (log scale)
         S_dB = librosa.power_to_db(S, ref=np.max)
         return S_dB
-    
+
     def spectrogram_idx_to_time_ms(self, idx):
         return idx * self.hop_length/self.sampling_rate * 1000
+
 
 class Tokeniser:
     def __init__(self):
@@ -114,18 +116,22 @@ class Tokeniser:
 
         # Abs times are in milliseconds
         abs_times = Tokeniser.ticks_to_time_ms(
-            torch.tensor(ticks), tempo, ticks_per_beat)
+            torch.tensor(ticks), tempo, ticks_per_beat,
+        )
         abs_times = torch.round(abs_times/10)*10
         # abs_times =  abs_times.to(torch.int32)
         notes = torch.tensor(notes)
         velocities = torch.tensor(velocities)
-        res = torch.stack([abs_times, notes, velocities],
-                          axis=1).to(torch.int32)
-        
+        res = torch.stack(
+            [abs_times, notes, velocities],
+            axis=1,
+        ).to(torch.int32)
+
         assert torch.min(res) >= 0
         # assert torch.max(res_between) < self.tok.vocab_size
 
-        assert torch.min(res[1:,0] - res[:-1,0]) >=0, "Times are not ascending"
+        assert torch.min(res[1:, 0] - res[:-1, 0]
+                         ) >= 0, 'Times are not ascending'
 
         return res
 
@@ -164,26 +170,27 @@ class Tokeniser:
         # Not inclusive, so we use normal indexing
         end_idx = (times > end_time_ms).nonzero(as_tuple=False)
         assert len(start_idx) > 0
-        assert len(end_idx) > 0, ""
+        assert len(end_idx) > 0, ''
 
         start_idx = start_idx[0].item()
         end_idx = end_idx[0].item()
 
         # Not figured out what happens with this yet (length must be > 0)
         if end_idx <= start_idx:
-            logger.info(f"No music between time {start_time_ms}, {end_time_ms}.")
+            logger.info(
+                f'No music between time {start_time_ms}, {end_time_ms}.')
             return torch.empty(0)
         else:
             # Clone or else downstream processing is affected
             return res[start_idx:end_idx].clone()
 
     def process_chunk(self, res: torch.Tensor, start_time_chunk: int):
-        """ Tokenises N instructions into 
+        """ Tokenises N instructions into
 
-        
+
         1. Turn into times relative to the chunk's start time
         1. Turns times into 10s of ms
-        1. Adds <bos> and <eos> 
+        1. Adds <bos> and <eos>
 
         # Divide by 10 for tokenisation
 
@@ -198,15 +205,16 @@ class Tokeniser:
         if res.numel() == 0:
             # raise NotImplementedError
             chunk = torch.tensor([self.bos_id, self.eos_id], dtype=torch.int32)
-        else: 
-        
+        else:
+
             # Turn to time relative to the start time
             time_processed = res[:, 0] // 10 - int(start_time_chunk//10)
             # Make sure that the time makes sense
             assert torch.min(time_processed) >= 0
             assert torch.max(
-                time_processed) < self.time_max, f'{start_time_chunk//10, time_processed}'
-            
+                time_processed,
+            ) < self.time_max, f'{start_time_chunk//10, time_processed}'
+
             res[:, 0] = time_processed
             res[:, 1] += self.time_max
             res[:, 2] += self.time_max + self.velocity_max
@@ -214,12 +222,13 @@ class Tokeniser:
             chunk = res.flatten()
             chunk = chunk.to(dtype=torch.int32)
             # Add <bos> and <eos>
-            chunk = torch.cat([torch.tensor([self.bos_id]), chunk, torch.tensor([self.eos_id])])
+            chunk = torch.cat([torch.tensor([self.bos_id]),
+                              chunk, torch.tensor([self.eos_id])])
 
-        assert torch.max(chunk) < self.vocab_size 
+        assert torch.max(chunk) < self.vocab_size
         assert torch.min(chunk) >= 0
         return chunk
-    
+
     def detokenise(self, tokens):
         res = tokens[tokens != self.pad_id]
         res = res[res != self.bos_id]
@@ -235,38 +244,43 @@ class Tokeniser:
     def res_to_messages(res, start_time_ms=0, tempo=500000, ticks_per_beat=384):
         messages = []
         prev_tick = Tokeniser.time_ms_to_ticks(
-            start_time_ms, tempo, ticks_per_beat)
+            start_time_ms, tempo, ticks_per_beat,
+        )
 
         for i in res:
             tick = Tokeniser.time_ms_to_ticks(i[0], tempo, ticks_per_beat)
             tick_delta = int(tick - prev_tick)
             prev_tick = tick
             assert tick_delta >= 0, f'Negative delta time detected: {tick_delta}'
-            msg = Message('note_on', note=int(
-                i[1]), velocity=int(i[2]), time=tick_delta)
+            msg = Message(
+                'note_on', note=int(
+                    i[1],
+                ), velocity=int(i[2]), time=tick_delta,
+            )
             messages.append(msg)
         return messages
 
+
 class DataProcessor:
-    def __init__(self, batch_size = 4):
+    def __init__(self, batch_size=4):
 
         self.tok = Tokeniser()
         self.ap = AudioProcessor()
         # Get sampling length of say 512
 
-        self.max_enc_len = 512
+        self.max_enc_len = 500
         self.max_dec_len = 1024
         self.N = batch_size
 
         self.make_spectrogram = self.ap.make_spectrogram
         self.process_midi = self.tok.process_midi
-    
-    def __call__(self, wav_path:str, midi_path:str):
+
+    def __call__(self, wav_path: str, midi_path: str):
         midi_file = mido.MidiFile(midi_path)
         spectrogram = self.make_spectrogram(wav_path)
         midi_tensor = self.process_midi(midi_file)
         return spectrogram, midi_tensor
-    
+
     def collate_fn(self, batch: list):
         """
         Get base midi file first
@@ -281,19 +295,24 @@ class DataProcessor:
         spectrogram_frames = []
         chunks = []
 
+        # Hack 2x so that fewer bugs occur
         spectrogram_start_idxs = torch.randint(
-            low=0, high=spectrogram.shape[1] - self.max_enc_len, size=(self.N,))
+            low=0, high=spectrogram.shape[1] - 2 * self.max_enc_len, size=(self.N,),
+        )
         # spectrogram_start_idxs = torch.tensor([0, 8000])
 
         # Times are in milliseconds
-        start_times_ms = self.ap.spectrogram_idx_to_time_ms(spectrogram_start_idxs) 
+        start_times_ms = self.ap.spectrogram_idx_to_time_ms(
+            spectrogram_start_idxs)
         # fix length to self.max_enc_len for now
-        end_times_ms = self.ap.spectrogram_idx_to_time_ms(spectrogram_start_idxs + self.max_enc_len) 
+        end_times_ms = self.ap.spectrogram_idx_to_time_ms(
+            spectrogram_start_idxs + self.max_enc_len)
 
         # Make spectrogram frames
         for i in spectrogram_start_idxs:
             spectrogram_frames.append(
-                torch.tensor(spectrogram[:, i:i+self.max_enc_len]))
+                torch.tensor(spectrogram[:, i:i+self.max_enc_len]),
+            )
 
         # These are absolute times
         for t0_ms, t1_ms in zip(start_times_ms, end_times_ms):
@@ -302,15 +321,18 @@ class DataProcessor:
             assert torch.min(res_between) >= 0
             # assert torch.max(res_between) < self.tok.vocab_size
             if len(res_between) > 1:
-                assert torch.min(res_between[1:,0] - res_between[:-1,0]) >=0, "Times are not ascending"
+                assert torch.min(
+                    res_between[1:, 0] - res_between[:-1, 0]) >= 0, 'Times are not ascending'
 
-            chunks.append(self.tok.process_chunk(res_between, start_time_chunk=t0_ms))
+            chunks.append(self.tok.process_chunk(
+                res_between, start_time_chunk=t0_ms))
 
         # Permute so it is N, seq_len, num_mels or num_features
-        return torch.stack(spectrogram_frames).permute(0,2,1), pad_sequence(chunks, batch_first=True, padding_value=self.tok.pad_id)
+        return torch.stack(spectrogram_frames).permute(0, 2, 1), pad_sequence(chunks, batch_first=True, padding_value=self.tok.pad_id)
+
 
 class MaestroDataset(Dataset):
-    def __init__(self, data_dir:str, path_to_csv:str, dp, train=True):
+    def __init__(self, data_dir: str, path_to_csv: str, dp, train=True):
         super().__init__()
         # self.dir = df_root
         self.dir = data_dir
@@ -318,14 +340,14 @@ class MaestroDataset(Dataset):
 
         self.df = pd.read_csv(path_to_csv)
         # Limit to 10 lines
-        self.df = self.df.iloc[0:5]
+        self.df = self.df.iloc[0:6]
         # Filter
-        self.df.loc[:3, 'split'] = 'train'
-        self.df.loc[3:5, 'split'] = 'valid' 
+        self.df.loc[:4, 'split'] = 'train'
+        self.df.loc[4:6, 'split'] = 'valid'
 
         split = 'train' if train else 'valid'
         self.df = self.df[self.df['split'] == split]
-        
+
         # self.df = self.df[self.df['year'].isin([2008, 2009])]
 
     def __len__(self):
@@ -334,31 +356,33 @@ class MaestroDataset(Dataset):
     def __getitem__(self, index):
         logger.info(f'Loading {self.df.iloc[index]["midi_filename"]}.')
         midi_filename = os.path.join(
-            self.dir, self.df.iloc[index]['midi_filename'])
+            self.dir, self.df.iloc[index]['midi_filename'],
+        )
         audio_filename = os.path.join(
-            self.dir, self.df.iloc[index]['audio_filename'])
+            self.dir, self.df.iloc[index]['audio_filename'],
+        )
 
-        # Returns entire file 
-        S_dB, midi_file = self.dp(audio_filename, midi_filename) 
+        # Returns entire file
+        S_dB, midi_file = self.dp(audio_filename, midi_filename)
         return S_dB, midi_file
 
+
 class MaestroDatasetSingle(Dataset):
-    def __init__(self, wav_path, midi_path , dp: DataProcessor):
+    def __init__(self, wav_path, midi_path, dp: DataProcessor):
         super().__init__()
         self.midi_filename = midi_path
         self.audio_filename = wav_path
         self.dp = dp
-        
 
     def __len__(self):
         return 1
 
     def __getitem__(self, index):
-        # Returns entire file 
-        S_dB, midi_file = self.dp(self.audio_filename, self.midi_filename) 
+        # Returns entire file
+        S_dB, midi_file = self.dp(self.audio_filename, self.midi_filename)
         return S_dB, midi_file
 
-    
+
 if __name__ == '__main__':
     midi_path = '/Users/kenton/Desktop/2008/MIDI-Unprocessed_01_R1_2008_01-04_ORIG_MID--AUDIO_01_R1_2008_wav--1.midi'
     wav_path = '/Users/kenton/Desktop/2008/MIDI-Unprocessed_01_R1_2008_01-04_ORIG_MID--AUDIO_01_R1_2008_wav--1.wav'
@@ -379,6 +403,8 @@ if __name__ == '__main__':
     for m in messages:
         print(m)
 
-    messages_to_wav(messages, tempo=500000, sample_rate=dp.ap.sampling_rate,
-                    ticks_per_beat=384, out_file='out.wav')
+    messages_to_wav(
+        messages, tempo=500000, sample_rate=dp.ap.sampling_rate,
+        ticks_per_beat=384, out_file='out.wav',
+    )
     spectrogram_to_wav(spectrograms[2])

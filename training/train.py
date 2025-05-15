@@ -37,7 +37,7 @@ class Validator:
                     model.eos_id,
                     model.pad_id,
                 )
-            
+
                 x = x.to(self.device)
                 inputs = inputs.to(self.device)
                 targets = targets.to(self.device)
@@ -117,11 +117,11 @@ class Trainer:
             # CHANGE THIS-------------------------------------------------------
             # Training forward code
             inputs, targets = get_decoder_inputs_and_targets(
-                    y,
-                    model.eos_id,
-                    model.pad_id,
-                )
-            
+                y,
+                model.eos_id,
+                model.pad_id,
+            )
+
             x = x.to(self.device)
             inputs = inputs.to(self.device)
             targets = targets.to(self.device)
@@ -209,7 +209,7 @@ class Trainer:
                 config=config,
             )
 
-        try: 
+        try:
             for epoch in range(epochs):
                 logger.info(f'Training: Epoch {epoch + 1} of {epochs}')
                 train_loss, train_accuracy = self.train_one_epoch(
@@ -233,8 +233,8 @@ class Trainer:
                 checkpoint = {
                     'model_state_dict': model.state_dict(),
                     'optimiser_state_dict': optimiser.state_dict(),
-                        }
-                
+                }
+
                 if log_to_wandb:
                     wandb.log({
                         'train/loss': train_loss,
@@ -243,7 +243,7 @@ class Trainer:
                         'val/accuracy': val_accuracy,
                     })
 
-                if epoch%epochs_per_log == (epochs_per_log - 1):
+                if epoch % epochs_per_log == (epochs_per_log - 1):
                     if log_locally or log_to_wandb:
                         if log_locally:
                             checkpoint_path = os.path.join(
@@ -252,19 +252,18 @@ class Trainer:
                             )
                             torch.save(checkpoint, checkpoint_path)
 
-            
-
                     if log_to_wandb:
                         checkpoint_path = os.path.join(
                             wandb.run.dir, f'{datetime.now().strftime("%Y%m%d_%H%M%S")}.pth',
                         )
                         torch.save(checkpoint, checkpoint_path)
-                        artifact = wandb.Artifact(model_name, type='checkpoint')
+                        artifact = wandb.Artifact(
+                            model_name, type='checkpoint')
                         artifact.add_file(checkpoint_path)
                         wandb.run.log_artifact(artifact)
 
         # Save in case it crashes
-        except Exception as e:  
+        except Exception as e:
             logger.error(f'Crashed {e}')
             if log_locally:
                 checkpoint_path = os.path.join(
@@ -298,12 +297,12 @@ if __name__ == '__main__':
         parser.add_argument(
             '--epochs',
             default=10,
-            type=int
+            type=int,
         )
         parser.add_argument(
             '--batch_size',
             default=2,
-            type=int
+            type=int,
         )
 
         parser.add_argument(
@@ -348,7 +347,6 @@ if __name__ == '__main__':
     batch_size = args.batch_size
     log_locally = args.log_locally
 
-
     # midi_path = '/Users/kenton/Desktop/2008/MIDI-Unprocessed_01_R1_2008_01-04_ORIG_MID--AUDIO_01_R1_2008_wav--1.midi'
     # wav_path = '/Users/kenton/Desktop/2008/MIDI-Unprocessed_01_R1_2008_01-04_ORIG_MID--AUDIO_01_R1_2008_wav--1.wav'
 
@@ -357,15 +355,17 @@ if __name__ == '__main__':
     train_ds = MaestroDataset(path_to_data_dir, path_to_csv, dp)
     val_ds = MaestroDataset(path_to_data_dir, path_to_csv, dp, train=False)
 
-    model_config = {'d_model': 256,
-                'enc_dims': dp.ap.n_mels, 
-                'enc_max_len': dp.max_enc_len,
-                'dec_max_len': dp.max_dec_len,
-                'dec_vocab_size': dp.tok.vocab_size,
-                'eos_id':dp.tok.eos_id,
-                'bos_id':dp.tok.bos_id,
-                'pad_id':dp.tok.pad_id}
-    
+    model_config = {
+        'd_model': 512,
+        'enc_dims': dp.ap.n_mels,
+        'enc_max_len': 512,
+        'dec_max_len': dp.max_dec_len,
+        'dec_vocab_size': dp.tok.vocab_size,
+        'eos_id': dp.tok.eos_id,
+        'bos_id': dp.tok.bos_id,
+        'pad_id': dp.tok.pad_id,
+    }
+
     # Config parameters
     setup_config = {
         'batch_size': batch_size,
@@ -375,9 +375,9 @@ if __name__ == '__main__':
     # Training configs
     training_config = {
         'project_name': 'mlx-week5-music',
-        'model_name': 'transcriber-256',
+        'model_name': f'transcriber-{model_config["d_model"]}',
         'epochs': epochs,
-        'lr': 5e-5,
+        'lr': 1e-4,
         'log_locally': log_locally,
         'log_to_wandb': log_to_wandb,
         'batches_print_frequency': 1,
@@ -390,46 +390,45 @@ if __name__ == '__main__':
 
     # One song per batch
     train_dl = DataLoader(
-            train_ds,
-            batch_size=1,
-            shuffle=True,
-            drop_last=True,
-            num_workers=setup_config.get('num_workers'),
-            collate_fn=dp.collate_fn,
-        )
-    
+        train_ds,
+        batch_size=1,
+        shuffle=True,
+        drop_last=True,
+        num_workers=setup_config.get('num_workers'),
+        collate_fn=dp.collate_fn,
+    )
+
     val_dl = DataLoader(
-            val_ds,
-            batch_size=1,
-            shuffle=False,
-            drop_last=True,
-            num_workers=setup_config.get('num_workers'),
-            collate_fn=dp.collate_fn,
-        )
+        val_ds,
+        batch_size=1,
+        shuffle=False,
+        drop_last=True,
+        num_workers=setup_config.get('num_workers'),
+        collate_fn=dp.collate_fn,
+    )
 
     num_params = count_trainable_params(model)
     logger.info(f'There are {num_params} trainable parameters in the model.')
     logger.info(model)
-
 
     optimiser = torch.optim.Adam(
         model.trainable_params(), lr=training_config.get('lr'),
     )
 
     # Load previously trained model
-    checkpoint_path = '/root/musica/checkpoints/20250515_134856.pth'
-    # if wandb_checkpoint:
-    #     checkpoint_path = get_wandb_checkpoint_path(
-    #         wandb_checkpoint,
-    #     )
+    checkpoint_path = '/root/musica/checkpoints/20250515_140802.pth'
+    if wandb_checkpoint:
+        checkpoint_path = get_wandb_checkpoint_path(
+            wandb_checkpoint,
+        )
 
     # Load the model
-    checkpoint = torch.load(
-        checkpoint_path,
-        map_location=device,
-        weights_only=True,
-    )
-    model.load_state_dict(checkpoint['model_state_dict'])
+    # checkpoint = torch.load(
+    #     checkpoint_path,
+    #     map_location=device,
+    #     weights_only=True,
+    # )
+    # model.load_state_dict(checkpoint['model_state_dict'])
 
     # Ignore pad id
     loss_fn = torch.nn.CrossEntropyLoss(ignore_index=model.pad_id)
