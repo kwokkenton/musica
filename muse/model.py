@@ -79,21 +79,22 @@ class MusicTranscriber(nn.Module):
         B, seq_len = y.shape
         _, enc_seq_len, _ = x.shape
 
+        tgt_key_padding_mask = (y == self.pad_id)
+        # tgt_key_padding_mask = None
         # Positional embeddings
-        x = self.encoder_mlp(
+        x_embs = self.encoder_mlp(
             x) + self.encoder_pos_encodings[:, :enc_seq_len, :]
-        y = self.decoder_emb(y) + self.decoder_pos_embeddings[:, :seq_len, :]
+        y_embs = self.decoder_emb(y) + self.decoder_pos_embeddings[:, :seq_len, :]
 
         # Prevents attention with padding tokens
-        tgt_padding_mask = (y == self.pad_id)
 
         # Causal mask to prevent attending to future tokens
-        causal_mask = make_causal_mask(seq_len, device=y.device)
+        causal_mask = make_causal_mask(seq_len, device=y_embs.device)
         res = self.transformer_model(
-            x,
-            y,
+            x_embs,
+            y_embs,
             tgt_mask=causal_mask,
-            tgt_padding_mask=tgt_padding_mask,
+            tgt_key_padding_mask=tgt_key_padding_mask,
         )
         scores = self.decoder_classifier(res)
         return scores

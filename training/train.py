@@ -250,9 +250,11 @@ class Trainer:
                                 checkpoint_folder,
                                 f'{datetime.now().strftime("%Y%m%d_%H%M%S")}.pth',
                             )
+                            logger.info(f'Saving locally {checkpoint_path}.')
                             torch.save(checkpoint, checkpoint_path)
 
                     if log_to_wandb:
+                        logger.info('Saving to wandb.')
                         checkpoint_path = os.path.join(
                             wandb.run.dir, f'{datetime.now().strftime("%Y%m%d_%H%M%S")}.pth',
                         )
@@ -296,7 +298,7 @@ if __name__ == '__main__':
         )
         parser.add_argument(
             '--epochs',
-            default=10,
+            default=1,
             type=int,
         )
         parser.add_argument(
@@ -416,19 +418,20 @@ if __name__ == '__main__':
     )
 
     # Load previously trained model
-    checkpoint_path = '/root/musica/checkpoints/20250515_140802.pth'
+    checkpoint_path = '/root/musica/checkpoints/20250515_150411.pth'
     if wandb_checkpoint:
         checkpoint_path = get_wandb_checkpoint_path(
             wandb_checkpoint,
         )
 
     # Load the model
-    # checkpoint = torch.load(
-    #     checkpoint_path,
-    #     map_location=device,
-    #     weights_only=True,
-    # )
-    # model.load_state_dict(checkpoint['model_state_dict'])
+    logger.info(f'Using saved model at {checkpoint_path}.')
+    checkpoint = torch.load(
+        checkpoint_path,
+        map_location=device,
+        weights_only=True,
+    )
+    model.load_state_dict(checkpoint['model_state_dict'])
 
     # Ignore pad id
     loss_fn = torch.nn.CrossEntropyLoss(ignore_index=model.pad_id)
