@@ -342,14 +342,14 @@ class MaestroDataset(Dataset):
 
         self.df = pd.read_csv(path_to_csv)
         # Limit to 10 lines
-        self.df = self.df.iloc[0:6]
+        self.df = self.df.iloc[0:2]
         # Filter
-        self.df.loc[:4, 'split'] = 'train'
-        self.df.loc[4:6, 'split'] = 'valid'
+        self.df.loc[0:1, 'split'] = 'train'
+        self.df.loc[1:2, 'split'] = 'valid'
 
         split = 'train' if train else 'valid'
         self.df = self.df[self.df['split'] == split]
-
+        print(self.df)
         # self.df = self.df[self.df['year'].isin([2008, 2009])]
 
     def __len__(self):

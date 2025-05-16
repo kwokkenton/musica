@@ -122,12 +122,15 @@ class Trainer:
                 model.eos_id,
                 model.pad_id,
             )
+            # Scale input
+            x = (x + 40)/80
 
             x = x.to(self.device)
             inputs = inputs.to(self.device)
             targets = targets.to(self.device)
             # Scores are (unnormalised) logits
-            scores = model(x, inputs)
+            scores = model(x = x, 
+                           y = inputs)
 
             # Then do the loss
             loss = loss_fn(
@@ -141,6 +144,13 @@ class Trainer:
             # Gather data and report
             running_loss += loss.item()
             if batch_idx % batches_print_frequency == (batches_print_frequency - 1):
+                # SANITY CHECKING
+                for name, param in model.named_parameters():
+                    if 'encoder_mlp' in name and param.grad is not None:
+                        logger.debug(f"{name}: {param.grad.abs().mean()}")
+                    
+                    if 'decoder_classifier' in name and param.grad is not None:
+                        logger.debug(f"{name}: {param.grad.abs().mean()}")
 
                 # CHANGE THIS---------------------------------------------------
                 # Logs and sanity checking code
@@ -236,7 +246,7 @@ class Trainer:
                     'model_state_dict': model.state_dict(),
                     'optimiser_state_dict': optimiser.state_dict(),
                 }
-
+                # Log metrics every epoch
                 if log_to_wandb:
                     wandb.log({
                         'train/loss': train_loss,
@@ -255,16 +265,16 @@ class Trainer:
                             logger.info(f'Saving locally {checkpoint_path}.')
                             torch.save(checkpoint, checkpoint_path)
 
-                    if log_to_wandb:
-                        logger.info('Saving to wandb.')
-                        checkpoint_path = os.path.join(
-                            wandb.run.dir, f'{datetime.now().strftime("%Y%m%d_%H%M%S")}.pth',
-                        )
-                        torch.save(checkpoint, checkpoint_path)
-                        artifact = wandb.Artifact(
-                            model_name, type='checkpoint')
-                        artifact.add_file(checkpoint_path)
-                        wandb.run.log_artifact(artifact)
+                    # if log_to_wandb:
+                    #     logger.info('Saving to wandb.')
+                    #     checkpoint_path = os.path.join(
+                    #         wandb.run.dir, f'{datetime.now().strftime("%Y%m%d_%H%M%S")}.pth',
+                    #     )
+                    #     torch.save(checkpoint, checkpoint_path)
+                    #     artifact = wandb.Artifact(
+                    #         model_name, type='checkpoint')
+                    #     artifact.add_file(checkpoint_path)
+                    #     wandb.run.log_artifact(artifact)
 
         # Save in case it crashes
         except Exception as e:

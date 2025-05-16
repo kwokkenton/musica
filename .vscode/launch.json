@@ -1,0 +1,18 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Train Model",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/training/train.py",
+            "args": [
+                "--epochs", "10",
+                "--batch_size", "4",
+                "--path_to_data_dir", "/data/2008",
+                "--path_to_csv", "/data/2008/data.csv"
+            ],
+            "console": "integratedTerminal"
+        }
+    ]
+}

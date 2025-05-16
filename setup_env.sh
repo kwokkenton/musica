@@ -21,3 +21,6 @@ wandb login
 huggingface-cli login
 
 pip install -e .
+
+apt update
+apt install fluidsynth
