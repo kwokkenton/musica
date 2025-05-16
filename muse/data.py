@@ -63,16 +63,18 @@ class AudioProcessor:
 
 class Tokeniser:
     def __init__(self):
-        self.time_ms_max = 60000
-        self.time_max = 6000
+        # Paper uses 6e4
+        self.time_ms_max = 1e4
+        # This is in 10s of ms
+        self.time_max = int(self.time_ms_max // 10)
         self.velocity_max = 128
         self.note_max = 128
 
-        self.bos_id = 6000+128+128
+        self.bos_id = self.time_max + 128+128
         self.eos_id = self.bos_id + 1
         self.pad_id = self.bos_id + 2
 
-        self.vocab_size = self.pad_id + 1
+        self.vocab_size = int(self.pad_id + 1)
 
     @staticmethod
     def process_midi(midi: MidiFile, tempo=500000):

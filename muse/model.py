@@ -60,7 +60,7 @@ class MusicTranscriber(nn.Module):
         self.pad_id = model_dict.get('pad_id')
 
         self.transformer_model = nn.Transformer(
-            d_model=self.d_model, batch_first=True)
+            d_model=self.d_model, batch_first=True, norm_first=True)
 
         # Initialise positional encodings
         self.encoder_pos_encodings = nn.Parameter(
@@ -75,9 +75,9 @@ class MusicTranscriber(nn.Module):
             self.dec_vocab_size, self.d_model, padding_idx=self.pad_id)
         self.decoder_classifier = nn.Linear(self.d_model, self.dec_vocab_size)
 
-    def forward(self, x, y):
-        B, seq_len = y.shape
-        _, enc_seq_len, _ = x.shape
+    def forward(self, x:torch.Tensor, y:torch.Tensor):
+        B, seq_len = y.shape # arbitrary decoder seq_len
+        _, enc_seq_len, _ = x.shape # fixed encoder seq_len, then num_features
 
         tgt_key_padding_mask = (y == self.pad_id)
         # tgt_key_padding_mask = None

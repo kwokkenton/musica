@@ -3,10 +3,10 @@ import os
 from datetime import datetime
 
 import torch
-import wandb
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+import wandb
 from muse.data import DataProcessor, MaestroDataset, MaestroDatasetSingle
 from muse.model import calculate_accuracy, get_decoder_inputs_and_targets
 from muse.utils import count_trainable_params, get_device, get_wandb_checkpoint_path
@@ -110,8 +110,9 @@ class Trainer:
         for batch_idx, batch in enumerate(tqdm(self.train_dl)):
             # Zero your gradients for every batch!
             optimiser.zero_grad()
-            # y is a padded sequence
-            # x shape B, D
+            
+            # x shape B, Seq, D
+            # y shape B, y_seq
             x, y = batch
 
             # CHANGE THIS-------------------------------------------------------
@@ -200,11 +201,12 @@ class Trainer:
         )
         project_name = config.get('project_name')
         model_name = config.get('model_name')
-        epochs_per_log = 10
+        epochs_per_log = 50
 
         if log_to_wandb:
             run = wandb.init(
                 entity='kwokkenton-individual',
+                name="null_cross_attention-001",
                 project=project_name,
                 config=config,
             )
@@ -356,8 +358,6 @@ if __name__ == '__main__':
     batch_size = args.batch_size
     log_locally = args.log_locally
     local_checkpoint = args.local_checkpoint
-    # midi_path = '/Users/kenton/Desktop/2008/MIDI-Unprocessed_01_R1_2008_01-04_ORIG_MID--AUDIO_01_R1_2008_wav--1.midi'
-    # wav_path = '/Users/kenton/Desktop/2008/MIDI-Unprocessed_01_R1_2008_01-04_ORIG_MID--AUDIO_01_R1_2008_wav--1.wav'
 
     dp = DataProcessor(batch_size=batch_size)
 
@@ -365,7 +365,7 @@ if __name__ == '__main__':
     val_ds = MaestroDataset(path_to_data_dir, path_to_csv, dp, train=False)
 
     model_config = {
-        'd_model': 512,
+        'd_model': 256,
         'enc_dims': dp.ap.n_mels,
         'enc_max_len': 512,
         'dec_max_len': dp.max_dec_len,
@@ -450,12 +450,6 @@ if __name__ == '__main__':
         setup_config=setup_config,
         device=device,
     )
-    # trainer.train_one_epoch(
-    #     model=model,
-    #     loss_fn=loss_fn,
-    #     optimiser=optimiser,
-    #     batches_print_frequency=training_config.get('batches_print_frequency'),
-    # )
 
     trainer.train(
         epochs=training_config.get('epochs'),
