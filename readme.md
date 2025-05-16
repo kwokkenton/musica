@@ -134,6 +134,10 @@ brew install fluidsynth
 https://github.com/bzamecnik/midi2audio/tree/master?tab=readme-ov-file
 ```
 
+```
+source setup_env.sh
+# Paste wandb and HF keys
+```
 ## References
 
 https://engineering.atspotify.com/2022/06/meet-basic-pitch/

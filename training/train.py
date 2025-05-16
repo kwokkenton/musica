@@ -3,10 +3,10 @@ import os
 from datetime import datetime
 
 import torch
+import wandb
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-import wandb
 from muse.data import DataProcessor, MaestroDataset, MaestroDatasetSingle
 from muse.model import calculate_accuracy, get_decoder_inputs_and_targets
 from muse.utils import count_trainable_params, get_device, get_wandb_checkpoint_path
@@ -318,6 +318,13 @@ if __name__ == '__main__':
             help='If set, enable logging locally.',
         )
         parser.add_argument(
+            '--local_checkpoint',
+            type=str,
+            required=False,
+            help="Local model .pth checkpoint path",
+        )
+
+        parser.add_argument(
             '--wandb_checkpoint',
             type=str,
             required=False,
@@ -348,7 +355,7 @@ if __name__ == '__main__':
     epochs = args.epochs
     batch_size = args.batch_size
     log_locally = args.log_locally
-
+    local_checkpoint = args.local_checkpoint
     # midi_path = '/Users/kenton/Desktop/2008/MIDI-Unprocessed_01_R1_2008_01-04_ORIG_MID--AUDIO_01_R1_2008_wav--1.midi'
     # wav_path = '/Users/kenton/Desktop/2008/MIDI-Unprocessed_01_R1_2008_01-04_ORIG_MID--AUDIO_01_R1_2008_wav--1.wav'
 
@@ -417,21 +424,23 @@ if __name__ == '__main__':
         model.trainable_params(), lr=training_config.get('lr'),
     )
 
-    # Load previously trained model
-    checkpoint_path = '/root/musica/checkpoints/20250515_150411.pth'
-    if wandb_checkpoint:
-        checkpoint_path = get_wandb_checkpoint_path(
-            wandb_checkpoint,
-        )
+    # Load previously trained model if provided
+    if local_checkpoint or wandb_checkpoint: 
+        if local_checkpoint:
+            checkpoint_path = local_checkpoint
+        elif wandb_checkpoint:
+            checkpoint_path = get_wandb_checkpoint_path(
+                wandb_checkpoint,
+            )
 
-    # Load the model
-    logger.info(f'Using saved model at {checkpoint_path}.')
-    checkpoint = torch.load(
-        checkpoint_path,
-        map_location=device,
-        weights_only=True,
-    )
-    model.load_state_dict(checkpoint['model_state_dict'])
+        # Load the model
+        logger.info(f'Using saved model at {checkpoint_path}.')
+        checkpoint = torch.load(
+            checkpoint_path,
+            map_location=device,
+            weights_only=True,
+        )
+        model.load_state_dict(checkpoint['model_state_dict'])
 
     # Ignore pad id
     loss_fn = torch.nn.CrossEntropyLoss(ignore_index=model.pad_id)
